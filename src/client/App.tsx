@@ -1,5 +1,20 @@
-import { useCallback, useEffect, useState } from 'react';
-import type { HealthResponse, SystemInfoResponse } from '../shared/types.js';
+import { useCallback, useEffect, useState, type FormEvent } from 'react';
+import type {
+  HealthResponse,
+  ParsedAddress,
+  ParsedComponents,
+  SystemInfoResponse,
+} from '../shared/types.js';
+
+const COMPONENT_ROWS: { key: keyof ParsedComponents; label: string }[] = [
+  { key: 'addressLine1', label: 'Address line 1' },
+  { key: 'postcode', label: 'Postcode' },
+  { key: 'city', label: 'City' },
+  { key: 'region', label: 'Region' },
+  { key: 'regionCode', label: 'Region code' },
+  { key: 'country', label: 'Country' },
+  { key: 'countryCode', label: 'Country code' },
+];
 
 type LoadState = 'loading' | 'ready' | 'error';
 
@@ -42,6 +57,41 @@ export default function App() {
 
   const online = state === 'ready' && health?.status === 'ok';
 
+  const [line, setLine] = useState('1600 Amphitheatre Parkway, Mountain View, CA 94043, USA');
+  const [hint, setHint] = useState('');
+  const [parsing, setParsing] = useState(false);
+  const [parsed, setParsed] = useState<ParsedAddress | null>(null);
+  const [parseError, setParseError] = useState<string | null>(null);
+
+  const submitParse = useCallback(
+    async (event: FormEvent<HTMLFormElement>) => {
+      event.preventDefault();
+      setParsing(true);
+      setParseError(null);
+
+      try {
+        const response = await fetch('/api/parse', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ line, countryHint: hint.trim() || undefined }),
+        });
+        const payload = (await response.json()) as { ok?: boolean; result?: ParsedAddress; error?: string };
+
+        if (!response.ok || !payload.ok || !payload.result) {
+          throw new Error(payload.error ?? `API responded ${response.status}`);
+        }
+
+        setParsed(payload.result);
+      } catch (cause) {
+        setParsed(null);
+        setParseError(cause instanceof Error ? cause.message : 'The address could not be parsed');
+      } finally {
+        setParsing(false);
+      }
+    },
+    [line, hint],
+  );
+
   return (
     <div className="app">
       <header className="topbar">
@@ -74,6 +124,100 @@ export default function App() {
             city, region, country and country code with traceable confidence and evidence. Missing
             information is reported, never invented.
           </p>
+        </section>
+
+        <section className="panel" aria-labelledby="parse-heading">
+          <div className="panel-head">
+            <h2 id="parse-heading">Parse a single address line</h2>
+            <span className="tag">Deterministic · no model call</span>
+          </div>
+          <form className="parse-form" onSubmit={(event) => void submitParse(event)}>
+            <label className="field-label" htmlFor="parse-line">
+              Address line
+            </label>
+            <textarea
+              id="parse-line"
+              className="parse-input"
+              rows={2}
+              value={line}
+              onChange={(event) => setLine(event.target.value)}
+              placeholder="1600 Amphitheatre Parkway, Mountain View, CA 94043, USA"
+            />
+            <div className="parse-controls">
+              <div className="parse-hint-wrap">
+                <label className="field-label" htmlFor="parse-hint">
+                  Country hint (optional)
+                </label>
+                <input
+                  id="parse-hint"
+                  className="parse-hint"
+                  value={hint}
+                  onChange={(event) => setHint(event.target.value)}
+                  placeholder="GB or United Kingdom"
+                />
+              </div>
+              <button className="primary-button" type="submit" disabled={parsing}>
+                {parsing ? 'Parsing…' : 'Parse address'}
+              </button>
+            </div>
+          </form>
+
+          {parseError && (
+            <div className="alert" role="alert">
+              {parseError}
+            </div>
+          )}
+
+          {parsed && (
+            <div className="parse-result">
+              <p className="parse-standardized">
+                <span className="card-label">Standardized</span>
+                <span>{parsed.standardizedText || 'No standard form could be built.'}</span>
+              </p>
+
+              <dl className="parse-grid">
+                {COMPONENT_ROWS.map(({ key, label }) => (
+                  <div className="component" key={key}>
+                    <dt>{label}</dt>
+                    <dd>
+                      {parsed.components[key] ?? <span className="empty-value">not present</span>}
+                    </dd>
+                    <p className="component-basis">
+                      {parsed.bases[key] ? `basis: ${parsed.bases[key]}` : 'basis: not detected'}
+                    </p>
+                  </div>
+                ))}
+              </dl>
+
+              <div className="chip-row">
+                <span className="card-label">Missing</span>
+                {parsed.missingComponents.length === 0 ? (
+                  <span className="chip is-ok">none</span>
+                ) : (
+                  parsed.missingComponents.map((item) => (
+                    <span className="chip is-warn" key={item}>
+                      {item}
+                    </span>
+                  ))
+                )}
+              </div>
+
+              {parsed.notes.length > 0 && (
+                <ul className="note-list">
+                  {parsed.notes.map((note, index) => (
+                    <li className={`note is-${note.severity}`} key={`${note.code}-${index}`}>
+                      {note.message}
+                    </li>
+                  ))}
+                </ul>
+              )}
+
+              <p className="panel-note">
+                Every value above is read from the text you supplied. A component that could not be
+                justified stays empty and appears under “Missing” — nothing is guessed or invented.
+              </p>
+            </div>
+          )}
         </section>
 
         {state === 'error' && (
