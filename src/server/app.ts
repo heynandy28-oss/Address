@@ -162,7 +162,7 @@ export function createApp(db: DatabaseSync): express.Express {
         enforcement: [
           'SQLite and Supabase schemas contain address_line1 only',
           'API responses expose addressLine1 only',
-          'Automated guard test scans the repository for a second address line',
+          'Automated guard test scans the repository for any additional address line',
         ],
       },
       dataSources: DATA_SOURCES,
