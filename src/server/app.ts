@@ -85,21 +85,21 @@ const ROADMAP: RoadmapPhase[] = [
   },
   {
     phase: 3,
-    title: 'Evidence-based verification',
-    summary: 'GeoNames matching plus throttled, cached public lookups with evidence URLs.',
-    status: 'planned',
+    title: 'Bulk CSV and Excel processing',
+    summary: 'Upload, original row preservation and original-order export.',
+    status: 'done',
   },
   {
     phase: 4,
-    title: 'Bulk CSV and Excel processing',
-    summary: 'Upload, original row preservation and original-order export.',
-    status: 'in_progress',
+    title: 'Evidence-based verification',
+    summary: 'GeoNames matching plus throttled, cached public lookups with evidence URLs.',
+    status: 'done',
   },
   {
     phase: 5,
     title: 'Dashboard and processing history',
     summary: 'Run history, per-row results, filters and evidence review.',
-    status: 'planned',
+    status: 'in_progress',
   },
   {
     phase: 6,
