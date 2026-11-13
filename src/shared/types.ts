@@ -22,6 +22,59 @@ export interface AddressComponents {
   countryCode: string | null;
 }
 
+export type ComponentBasis =
+  | 'country-name'
+  | 'country-code'
+  | 'country-alias'
+  | 'country-hint'
+  | 'postcode-pattern'
+  | 'postcode-pattern-generic'
+  | 'region-code'
+  | 'region-name'
+  | 'position-heuristic'
+  | 'single-segment';
+
+/** Result of parsing one address line. Every value is extracted, never inferred. */
+export interface ParsedComponents {
+  addressLine1: string | null;
+  postcode: string | null;
+  city: string | null;
+  region: string | null;
+  regionCode: string | null;
+  country: string | null;
+  countryCode: string | null;
+}
+
+export type ParseNoteSeverity = 'info' | 'warning';
+
+export interface ParseNote {
+  code: string;
+  severity: ParseNoteSeverity;
+  message: string;
+}
+
+export interface ParsedAddress {
+  rawText: string;
+  normalizedText: string;
+  standardizedText: string;
+  components: ParsedComponents;
+  bases: Partial<Record<keyof ParsedComponents, ComponentBasis>>;
+  missingComponents: (keyof ParsedComponents)[];
+  notes: ParseNote[];
+  parserVersion: string;
+  parsedAt: string;
+}
+
+export interface ParseResponse {
+  ok: true;
+  result: ParsedAddress;
+}
+
+export interface ApiError {
+  ok: false;
+  error: string;
+}
+
 export interface StorageInfo {
   backend: 'sqlite' | 'supabase';
   ready: boolean;

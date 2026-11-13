@@ -11,9 +11,14 @@ import {
   SUPABASE_CONFIGURED,
 } from './config.js';
 import { getSchemaSnapshot } from './db/index.js';
+import { COUNTRY_FORMATS, COUNTRIES, REGIONS, lookupCountry } from './engine/countries.js';
+import { MAX_LINE_LENGTH, PARSER_VERSION, parseAddress } from './engine/parse.js';
+import { normalizeKey } from './engine/text.js';
 import type {
+  ApiError,
   DataSourceInfo,
   HealthResponse,
+  ParseResponse,
   RoadmapPhase,
   SystemInfoResponse,
 } from '../shared/types.js';
@@ -142,6 +147,63 @@ export function createApp(db: DatabaseSync): express.Express {
     };
 
     res.json(body);
+  });
+
+  app.post('/api/parse', (req, res) => {
+    const body = (req.body ?? {}) as { line?: unknown; countryHint?: unknown };
+    const line = typeof body.line === 'string' ? body.line.trim() : '';
+
+    if (!line) {
+      const error: ApiError = { ok: false, error: 'Provide the address line to parse.' };
+      res.status(400).json(error);
+      return;
+    }
+
+    if (line.length > MAX_LINE_LENGTH) {
+      const error: ApiError = {
+        ok: false,
+        error: `The address line must be ${MAX_LINE_LENGTH} characters or fewer.`,
+      };
+      res.status(400).json(error);
+      return;
+    }
+
+    let countryHint: string | null = null;
+    if (body.countryHint !== undefined && body.countryHint !== null && body.countryHint !== '') {
+      if (typeof body.countryHint !== 'string') {
+        const error: ApiError = { ok: false, error: 'countryHint must be a country name or ISO code.' };
+        res.status(400).json(error);
+        return;
+      }
+      countryHint = body.countryHint.trim();
+      if (!lookupCountry(normalizeKey(countryHint))) {
+        const error: ApiError = {
+          ok: false,
+          error: `The country hint "${countryHint}" is not a recognised country name or ISO code.`,
+        };
+        res.status(400).json(error);
+        return;
+      }
+    }
+
+    const payload: ParseResponse = { ok: true, result: parseAddress(line, { countryHint }) };
+    res.json(payload);
+  });
+
+  app.get('/api/engine/capabilities', (_req, res) => {
+    res.json({
+      ok: true,
+      parserVersion: PARSER_VERSION,
+      addressLineFields: [...ADDRESS_LINE_FIELDS],
+      countries: COUNTRIES.length,
+      postcodeFormats: Object.keys(COUNTRY_FORMATS).length,
+      regionSets: Object.keys(REGIONS).map((code) => ({
+        countryCode: code,
+        regions: REGIONS[code].length,
+      })),
+      policy:
+        'Deterministic extraction only: a component is returned only when the supplied text supports it, otherwise it stays empty and a note explains why.',
+    });
   });
 
   app.get('/api/system', (_req, res) => {
