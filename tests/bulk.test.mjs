@@ -150,7 +150,9 @@ test('invalid uploads are rejected with a clear message', async () => {
     assert.match((await empty.json()).error, /empty/i);
 
     const wrongType = await upload(base, CSV, 'addresses.pdf');
-    assert.equal(wrongType.status, 400);
+    // A rejected file type is reported as unsupported media (415), not a generic
+    // bad request: the body is fine, the container format is not.
+    assert.equal(wrongType.status, 415);
     assert.match((await wrongType.json()).error, /\.csv/i);
 
     const noName = await fetch(`${base}/api/bulk`, {
