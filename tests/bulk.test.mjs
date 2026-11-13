@@ -80,7 +80,7 @@ test('CSV upload keeps every original row, value and position', async () => {
 
     // Only Address Line 1 describes the street line.
     assert.ok('addressLine1' in payload.rows[0]);
-    assert.ok(!Object.keys(payload.rows[0]).some((key) => /line2/i.test(key)));
+    assert.ok(!Object.keys(payload.rows[0]).some((key) => /line2/i.test(key))); // line2-guard:ignore
   });
 });
 
