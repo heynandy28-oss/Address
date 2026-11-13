@@ -125,6 +125,11 @@ function decodeHeader(value: string | string[] | undefined): string | null {
   }
 }
 
+function routeParam(value: string | string[] | undefined): string {
+  if (Array.isArray(value)) return value[0] ?? '';
+  return value ?? '';
+}
+
 function sendBulkError(res: express.Response, error: unknown): void {
   if (error instanceof BulkError) {
     const body: ApiError = { ok: false, error: error.message };
@@ -340,7 +345,7 @@ export function createApp(db: DatabaseSync): express.Express {
   });
 
   app.get('/api/bulk/:runId', (req, res) => {
-    const stored = getRun(db, req.params.runId, 200);
+    const stored = getRun(db, routeParam(req.params.runId), 200);
     if (!stored) {
       const error: ApiError = { ok: false, error: 'No processing run with that id.' };
       res.status(404).json(error);
@@ -354,7 +359,7 @@ export function createApp(db: DatabaseSync): express.Express {
   const sendExport = (format: 'csv' | 'xlsx') =>
     async (req: express.Request, res: express.Response): Promise<void> => {
       try {
-        const file = await buildExport(db, req.params.runId, format);
+        const file = await buildExport(db, routeParam(req.params.runId), format);
         if (!file) {
           const error: ApiError = { ok: false, error: 'No processing run with that id.' };
           res.status(404).json(error);
