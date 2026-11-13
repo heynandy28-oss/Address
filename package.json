@@ -1,0 +1,32 @@
+{
+  "name": "address-intelligence",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Worldwide deterministic address intelligence: single-line address parsing, component diagnostics, evidence-based verification and bulk processing.",
+  "engines": {
+    "node": ">=22.5.0"
+  },
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -p tsconfig.server.json && vite build",
+    "start": "node dist/server/index.js",
+    "test": "node --test tests/",
+    "guard:line2": "node scripts/check-address-line1-only.mjs",
+    "check": "npm run build && npm test"
+  },
+  "dependencies": {
+    "express": "^5.1.0",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.0",
+    "@types/node": "^26.0.0",
+    "@types/react": "^19.1.0",
+    "@types/react-dom": "^19.1.0",
+    "@vitejs/plugin-react": "^5.0.0",
+    "typescript": "^5.6.0",
+    "vite": "^7.0.0"
+  }
+}
