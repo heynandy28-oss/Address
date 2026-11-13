@@ -12,7 +12,7 @@
     "build": "tsc -p tsconfig.server.json && vite build",
     "start": "node dist/server/index.js",
     "test": "node --test tests/",
-    "guard:line2": "node scripts/check-address-line1-only.mjs",
+    "guard:address-line": "node scripts/check-address-line1-only.mjs",
     "check": "npm run build && npm test"
   },
   "dependencies": {

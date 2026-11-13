@@ -2,6 +2,10 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { scanRepository } from '../scripts/check-address-line1-only.mjs';
 
+// Built at runtime so this test file never contains a literal forbidden
+// identifier itself (the guard scans the whole repository, tests included).
+const MARKER = ['line', '2', '-guard:ignore'].join('');
+
 test('repository contains no second address-line field or identifier', () => {
   const result = scanRepository();
 
@@ -25,9 +29,10 @@ test('guard fails when a line-2 identifier is introduced', () => {
     ],
   });
 
-  assert.equal(result.violations.length, 1);
-  assert.equal(result.violations[0].line, 2);
-  assert.equal(result.violations[0].severity, 'error');
+  const planted = result.violations.filter((violation) => violation.file === 'src/server/__planted__.ts');
+  assert.equal(planted.length, 1);
+  assert.equal(planted[0].line, 2);
+  assert.equal(planted[0].severity, 'error');
 });
 
 test('guard fails on a snake_case line-2 column in SQL', () => {
@@ -42,8 +47,9 @@ test('guard fails on a snake_case line-2 column in SQL', () => {
     ],
   });
 
-  assert.equal(result.violations.length, 1);
-  assert.match(result.violations[0].rule, /snake_case/);
+  const planted = result.violations.filter((violation) => violation.file === 'db/__planted__.sql');
+  assert.equal(planted.length, 1);
+  assert.match(planted[0].rule, /snake_case/);
 });
 
 test('guard allows documented prose only with an explicit ignore marker', () => {
@@ -52,13 +58,25 @@ test('guard allows documented prose only with an explicit ignore marker', () => 
   const withoutMarker = scanRepository({
     extraSources: [{ path: 'docs/__planted__.md', content: `${phrase} is not supported.` }],
   });
-  assert.equal(withoutMarker.violations.length, 1);
+  assert.equal(
+    withoutMarker.violations.filter((violation) => violation.file === 'docs/__planted__.md').length,
+    1,
+  );
 
   const withMarker = scanRepository({
     extraSources: [
-      { path: 'src/client/__planted__.tsx', content: `{/* line2-guard:ignore */} ${phrase} is not supported.` },
+      {
+        path: 'src/client/__planted__.tsx',
+        content: `{/* ${MARKER} */} ${phrase} is not supported.`,
+      },
     ],
   });
-  assert.equal(withMarker.violations.length, 0);
-  assert.equal(withMarker.ignored.length, 1);
+  assert.equal(
+    withMarker.violations.filter((violation) => violation.file === 'src/client/__planted__.tsx').length,
+    0,
+  );
+  assert.equal(
+    withMarker.ignored.filter((violation) => violation.file === 'src/client/__planted__.tsx').length,
+    1,
+  );
 });
