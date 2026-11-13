@@ -4,9 +4,22 @@
  * Only tabular text matters for address processing, so the workbook is reduced
  * to a matrix of strings immediately. Cell values are stringified exactly as
  * they were read; nothing is reformatted, reordered or guessed.
+ *
+ * Both packages ship rich types for their browser and Node variants; the two
+ * Node entry points used here are narrowed locally so the rest of the server
+ * code keeps precise types.
  */
-import readXlsxFile from 'read-excel-file/node';
-import writeXlsxFile from 'write-excel-file/node';
+import readXlsxFileModule from 'read-excel-file/node';
+import writeXlsxFileModule from 'write-excel-file/node';
+
+type ExcelCell = { value: string; type: typeof String } | null;
+
+const readXlsxFile = readXlsxFileModule as unknown as (input: Buffer) => Promise<unknown[][]>;
+
+const writeXlsxFile = writeXlsxFileModule as unknown as (
+  data: ExcelCell[][],
+  options: { buffer: true },
+) => Promise<Buffer>;
 
 export function cellToText(cell: unknown): string {
   if (cell === null || cell === undefined) return '';
@@ -18,11 +31,9 @@ export function cellToText(cell: unknown): string {
 
 /** Reads the first worksheet of a workbook into string rows, in file order. */
 export async function readXlsx(buffer: Buffer): Promise<string[][]> {
-  const rows = (await readXlsxFile(buffer)) as unknown[][];
+  const rows = await readXlsxFile(buffer);
   return rows.map((row) => row.map(cellToText));
 }
-
-type ExcelCell = { value: string; type: typeof String } | null;
 
 /** Writes rows to an .xlsx workbook, keeping every value as text. */
 export async function writeXlsx(rows: string[][]): Promise<Buffer> {
@@ -30,5 +41,5 @@ export async function writeXlsx(rows: string[][]): Promise<Buffer> {
     row.map((value) => (value === '' ? null : { value, type: String })),
   );
   const buffer = await writeXlsxFile(data, { buffer: true });
-  return buffer as Buffer;
+  return buffer;
 }
