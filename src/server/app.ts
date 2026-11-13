@@ -21,6 +21,7 @@ import {
 import { COUNTRY_FORMATS, COUNTRIES, REGIONS, lookupCountry } from './engine/countries.js';
 import { MAX_LINE_LENGTH, PARSER_VERSION, parseAddress } from './engine/parse.js';
 import { normalizeKey } from './engine/text.js';
+import { verificationCapabilities, verifyAddress } from './verify/service.js';
 import type {
   ApiError,
   BulkRunDetail,
@@ -31,6 +32,7 @@ import type {
   ParseResponse,
   RoadmapPhase,
   SystemInfoResponse,
+  VerifyResponse,
 } from '../shared/types.js';
 
 const ADDRESS_LINE_FIELDS = ['addressLine1'] as const;
@@ -226,6 +228,55 @@ export function createApp(db: DatabaseSync): express.Express {
 
     const payload: ParseResponse = { ok: true, result: parseAddress(line, { countryHint }) };
     res.json(payload);
+  });
+
+  app.post('/api/verify', async (req, res) => {
+    const body = (req.body ?? {}) as { line?: unknown; countryHint?: unknown; allowRemote?: unknown };
+    const line = typeof body.line === 'string' ? body.line.trim() : '';
+
+    if (!line) {
+      const error: ApiError = { ok: false, error: 'Provide the address line to verify.' };
+      res.status(400).json(error);
+      return;
+    }
+
+    if (line.length > MAX_LINE_LENGTH) {
+      const error: ApiError = {
+        ok: false,
+        error: `The address line must be ${MAX_LINE_LENGTH} characters or fewer.`,
+      };
+      res.status(400).json(error);
+      return;
+    }
+
+    let countryHint: string | null = null;
+    if (body.countryHint !== undefined && body.countryHint !== null && body.countryHint !== '') {
+      if (typeof body.countryHint !== 'string') {
+        const error: ApiError = { ok: false, error: 'countryHint must be a country name or ISO code.' };
+        res.status(400).json(error);
+        return;
+      }
+      countryHint = body.countryHint.trim();
+      if (!lookupCountry(normalizeKey(countryHint))) {
+        const error: ApiError = {
+          ok: false,
+          error: `The country hint "${countryHint}" is not a recognised country name or ISO code.`,
+        };
+        res.status(400).json(error);
+        return;
+      }
+    }
+
+    const result = parseAddress(line, { countryHint });
+    // Remote lookup is opt-in per request, so a bulk or scripted caller never
+    // triggers public API traffic by accident.
+    const verification = await verifyAddress(result, { allowRemote: body.allowRemote === true });
+    const payload: VerifyResponse = { ok: true, result, verification };
+    res.json(payload);
+  });
+
+  app.get('/api/verify/sources', (_req, res) => {
+    res.json({ ok: true, ...verificationCapabilities() });
   });
 
   app.get('/api/engine/capabilities', (_req, res) => {
