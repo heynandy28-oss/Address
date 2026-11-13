@@ -278,6 +278,23 @@ test('is deterministic for identical input', () => {
   assert.deepEqual({ ...first, parsedAt: '' }, { ...second, parsedAt: '' });
 });
 
+test('keeps the region as written in the standardized line', () => {
+  const us = parseAddress('1600 Amphitheatre Parkway, Mountain View, CA 94043, USA');
+  assert.equal(us.components.region, 'California');
+  assert.equal(
+    us.standardizedText,
+    '1600 Amphitheatre Parkway, Mountain View, CA, 94043, United States',
+  );
+
+  const br = parseAddress('Av. Paulista 1578, São Paulo, SP, 01310-200, Brasil');
+  assert.equal(br.standardizedText, 'Av. Paulista 1578, São Paulo, SP, 01310-200, Brazil');
+
+  // A spelled-out region name stays spelled out; it is never rewritten as a code.
+  const de = parseAddress('Unter den Linden 77, 10117 Berlin, Deutschland');
+  assert.ok(de.standardizedText.includes('Berlin'));
+  assert.ok(!de.standardizedText.includes(', BE,'));
+});
+
 test('rejects absurdly long input at the documented limit', () => {
   assert.equal(MAX_LINE_LENGTH, 400);
   const result = parseAddress('A'.repeat(MAX_LINE_LENGTH));
