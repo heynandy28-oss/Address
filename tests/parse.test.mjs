@@ -444,8 +444,62 @@ test('a country code standing alone in its own segment still resolves', () => {
   assert.equal(portugal.components.postcode, '1100-053');
 });
 
-test('a postcode shared by several countries never invents a country', () => {
-  const result = parseAddress('12 Hauptstrasse, 10117 Berlin');
+/* ------------------------------------------------- organization names (DE) */
+
+test('removes a leading organization name and keeps only postal components', () => {
+  const result = parseAddress('CellCore GmbH, Kolonnenstraße 8, 10827 Berlin');
+
+  assert.equal(result.components.addressLine1, 'Kolonnenstraße 8');
+  assert.equal(result.components.postcode, '10827');
+  assert.equal(result.components.city, 'Berlin');
+  assert.equal(result.components.region, null);
+  assert.equal(result.components.country, 'Germany');
+  assert.equal(result.components.countryCode, 'DE');
+  // The organization is gone from every processed component, but the raw input
+  // stays available for audit purposes.
+  assert.equal(JSON.stringify(result.components).includes('CellCore'), false);
+  assert.equal(result.rawText.includes('CellCore GmbH'), true);
+  assert.ok(result.notes.some((note) => note.code === 'organization-removed'));
+  assert.deepEqual(Object.keys(result.components), COMPONENT_FIELDS);
+});
+
+test('organization detection is general, not tied to one company', () => {
+  const cases = [
+    ['Acme Ltd, 10 Downing St, London SW1A 2AA', '10 Downing St'],
+    ['Globex Holdings, Kolonnenstraße 8, 10827 Berlin', 'Kolonnenstraße 8'],
+    ['Initech B.V., Damrak 1, Amsterdam', 'Damrak 1'],
+    ['Umbrella Corporation, 10 Downing St, London SW1A 2AA', '10 Downing St'],
+  ];
+
+  for (const [line, expected] of cases) {
+    const result = parseAddress(line);
+    assert.equal(result.components.addressLine1, expected, line);
+  }
+});
+
+test('an organization written after the address is removed too', () => {
+  const result = parseAddress('Kolonnenstraße 8, 10827 Berlin, CellCore GmbH');
+
+  assert.equal(result.components.addressLine1, 'Kolonnenstraße 8');
+  assert.equal(result.components.postcode, '10827');
+  assert.equal(result.components.city, 'Berlin');
+});
+
+test('a genuine street or building name is never removed as an organization', () => {
+  const street = parseAddress('10 Downing St, London SW1A 2AA');
+  assert.equal(street.components.addressLine1, '10 Downing St');
+  assert.equal(street.notes.some((note) => note.code === 'organization-removed'), false);
+
+  const building = parseAddress('The Old Mill, Mill Lane, Cambridge CB2 1TN');
+  assert.match(building.components.addressLine1 ?? '', /The Old Mill/);
+  assert.match(building.components.addressLine1 ?? '', /Mill Lane/);
+  assert.equal(building.notes.some((note) => note.code === 'organization-removed'), false);
+
+  const suffixed = parseAddress('1A Leicester St, Melton Mowbray LE13 0PP');
+  assert.equal(suffixed.components.addressLine1, '1A Leicester St');
+});
+
+test('a postcode shared by several countries never invents a country', () => {  const result = parseAddress('12 Hauptstrasse, 10117 Berlin');
 
   assert.equal(result.components.postcode, '10117');
   assert.equal(result.components.countryCode, null, 'a five-digit postcode is ambiguous');
