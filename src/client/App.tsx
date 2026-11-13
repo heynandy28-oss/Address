@@ -5,6 +5,7 @@ import type {
   ParsedComponents,
   SystemInfoResponse,
 } from '../shared/types.js';
+import { BulkPanel } from './BulkPanel.js';
 
 const COMPONENT_ROWS: { key: keyof ParsedComponents; label: string }[] = [
   { key: 'addressLine1', label: 'Address line 1' },
@@ -109,7 +110,7 @@ export default function App() {
             <span className="dot" aria-hidden="true" />
             {state === 'loading' ? 'Connecting' : online ? 'System online' : 'API unreachable'}
           </span>
-          <span className="phase-pill">Phase {health?.phase ?? 0} · Diagnostics</span>
+          <span className="phase-pill">Phase {health?.phase ?? 0} · Bulk</span>
           <button className="ghost-button" type="button" onClick={() => void load()}>
             Refresh
           </button>
@@ -263,6 +264,8 @@ export default function App() {
             <strong>Could not read system status.</strong> {error}
           </div>
         )}
+
+        <BulkPanel />
 
         <section className="grid" aria-label="System status">
           <article className="card">
