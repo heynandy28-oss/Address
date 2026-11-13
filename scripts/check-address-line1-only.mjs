@@ -87,7 +87,12 @@ function scanContent(relativePath, content) {
   const ignored = [];
 
   content.split(/\r?\n/).forEach((line, index) => {
-    const identifier = IDENTIFIER_PATTERNS.find((pattern) => pattern.re.test(line));
+    const hasMarker = line.includes(IGNORE_MARKER);
+    // The marker token itself contains a forbidden fragment, so it is removed
+    // before identifier matching. Everything else on the line stays enforced.
+    const inspected = hasMarker ? line.split(IGNORE_MARKER).join('') : line;
+
+    const identifier = IDENTIFIER_PATTERNS.find((pattern) => pattern.re.test(inspected));
     if (identifier) {
       violations.push({
         file: relativePath,
@@ -99,10 +104,10 @@ function scanContent(relativePath, content) {
       return;
     }
 
-    const prose = PROSE_PATTERNS.find((pattern) => pattern.re.test(line));
+    const prose = PROSE_PATTERNS.find((pattern) => pattern.re.test(inspected));
     if (!prose) return;
 
-    if (line.includes(IGNORE_MARKER)) {
+    if (hasMarker) {
       ignored.push({ file: relativePath, line: index + 1, rule: prose.label });
       return;
     }
