@@ -76,6 +76,14 @@ function uniqueRegionForCode(token: string): { code: string; name: string } | nu
 }
 
 /**
+ * Two-letter street abbreviations that are also ISO 3166-1 codes: ST (Sao Tome),
+ * PL (Poland), DR (Dominican Republic), CL (Chile), MT (Malta), PT (Portugal),
+ * CR (Costa Rica), GD (Grenada). Inside a multi-word segment these read as part
+ * of the street name, never as a country, so the street is never truncated.
+ */
+const STREET_SUFFIX_CODES = new Set(['st', 'pl', 'dr', 'cl', 'mt', 'pt', 'cr', 'gd']);
+
+/**
  * Matches a country at the END of a segment, longest candidate first, so
  * "United States of America" wins over "America".
  */
@@ -88,6 +96,10 @@ function resolveTrailingCountry(segment: string): CountryResolution | null {
     const entry = lookupCountry(key);
     if (!entry) continue;
     const bareIsoCode = count === 1 && key === entry.code.toLowerCase();
+    // A trailing "St" in "1A Leicester St" is the street suffix, not Sao Tome.
+    // The same token standing alone in its own segment ("..., ST") is still a
+    // country code, so only a street-suffixed multi-word segment is refused.
+    if (bareIsoCode && words.length > 1 && STREET_SUFFIX_CODES.has(key)) continue;
     return {
       code: entry.code,
       name: entry.name,
@@ -130,6 +142,52 @@ function computeMissing(
   if (!components.country) missing.push('country');
   if (!components.countryCode) missing.push('countryCode');
   return missing;
+}
+
+/** Postcode-shaped tokens contained in a segment, uppercased. */
+function postcodeCandidates(segment: string): string[] {
+  const upper = collapseWhitespace(segment).toUpperCase();
+  if (!upper) return [];
+  const found: string[] = [];
+  for (const core of GENERIC_POSTCODE_CORES) {
+    if (new RegExp(`^(?:${core})$`).test(upper)) found.push(upper);
+    const trailing = upper.match(new RegExp(`^(?:.*\\S)\\s+(${core})$`));
+    if (trailing) found.push(trailing[1]);
+    const leading = upper.match(new RegExp(`^(${core})\\s+(?:.+)$`));
+    if (leading) found.push(leading[1]);
+  }
+  return found;
+}
+
+let nationalPostcodePatterns: { code: string; pattern: RegExp }[] | null = null;
+
+function postcodePatterns(): { code: string; pattern: RegExp }[] {
+  if (!nationalPostcodePatterns) {
+    nationalPostcodePatterns = Object.entries(COUNTRY_FORMATS)
+      .filter(([, format]) => format.postcodeExpected && Boolean(format.postcodeCore))
+      .map(([code, format]) => ({ code, pattern: new RegExp(`^(?:${format.postcodeCore})$`) }));
+  }
+  return nationalPostcodePatterns;
+}
+
+/**
+ * Infers the country from the postcode only when exactly one national pattern
+ * fits. A five-digit postcode fits a dozen countries and is therefore left
+ * undetermined, while a UK postcode such as "LE13 0PP" fits only GB. This is
+ * evidence from the input, never an invented value.
+ */
+function inferCountryFromPostcode(segments: string[]): { code: string; name: string } | null {
+  for (let index = segments.length - 1; index >= 0; index -= 1) {
+    for (const candidate of postcodeCandidates(segments[index])) {
+      const matches = postcodePatterns().filter((entry) => entry.pattern.test(candidate));
+      if (matches.length === 1) {
+        const entry = lookupCountry(normalizeKey(matches[0].code));
+        if (entry) return { code: entry.code, name: entry.name };
+      }
+      if (matches.length > 1) return null;
+    }
+  }
+  return null;
 }
 
 export function parseAddress(rawLine: string, options: ParseOptions = {}): ParsedAddress {
@@ -249,6 +307,21 @@ export function parseAddress(rawLine: string, options: ParseOptions = {}): Parse
     if (resolution.rest) segments[index] = resolution.rest;
     else segments.splice(index, 1);
     break;
+  }
+
+  if (!components.countryCode) {
+    const inferred = inferCountryFromPostcode(segments);
+    if (inferred) {
+      components.country = inferred.name;
+      components.countryCode = inferred.code;
+      bases.country = 'postcode-pattern';
+      bases.countryCode = 'postcode-pattern';
+      notes.push({
+        code: 'country-inferred-from-postcode',
+        severity: 'info',
+        message: `No country was written, but the postcode matches only ${inferred.name}, so the country was taken from the postcode pattern.`,
+      });
+    }
   }
 
   if (!components.countryCode) {
