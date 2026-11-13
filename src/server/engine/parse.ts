@@ -210,7 +210,9 @@ function hasStreetEvidence(segment: string): boolean {
 function looksLikeOrganization(segment: string): boolean {
   const text = collapseWhitespace(segment);
   if (!text) return false;
-  return ORG_LEGAL_FORM.test(text) || ORG_TAIL.test(text);
+  // Dotted legal forms (B.V., S.A., Inc.) are matched without their dots.
+  const flat = text.replace(/\./g, '');
+  return ORG_LEGAL_FORM.test(flat) || ORG_TAIL.test(flat);
 }
 
 /**
