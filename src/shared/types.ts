@@ -53,6 +53,19 @@ export interface ParseNote {
   message: string;
 }
 
+export type DiagnosticKind = 'missing' | 'misplaced' | 'conflicting' | 'ambiguous' | 'informational';
+
+export type DiagnosticSeverity = 'error' | 'warning' | 'info';
+
+/** One explainable defect found in a parsed address. */
+export interface AddressDiagnostic {
+  kind: DiagnosticKind;
+  severity: DiagnosticSeverity;
+  component: keyof ParsedComponents | null;
+  code: string;
+  message: string;
+}
+
 export interface ParsedAddress {
   rawText: string;
   normalizedText: string;
@@ -61,6 +74,14 @@ export interface ParsedAddress {
   bases: Partial<Record<keyof ParsedComponents, ComponentBasis>>;
   missingComponents: (keyof ParsedComponents)[];
   notes: ParseNote[];
+  /** 0-100 overall score derived from extraction rules minus diagnostics. */
+  confidence: number;
+  /** 0-100 share of the components this country's format expects that were found. */
+  completeness: number;
+  componentConfidence: Record<keyof ParsedComponents, number | null>;
+  diagnostics: AddressDiagnostic[];
+  verificationStatus: VerificationStatus;
+  statusReason: string;
   parserVersion: string;
   parsedAt: string;
 }
