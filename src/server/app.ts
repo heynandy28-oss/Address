@@ -548,7 +548,20 @@ export function createApp(db: DatabaseSync, options: AppOptions = {}): express.E
   });
 
   app.get('/api/bulk/:runId', async (req, res) => {
-    const stored = await history.getRun(routeParam(req.params.runId), 200);
+    const stored = await history.getRun(routeParam(req.params.runId), 200).catch((error: unknown) => {
+      console.error('[address-intelligence] history lookup failed', error);
+      return 'unavailable' as const;
+    });
+
+    if (stored === 'unavailable') {
+      const failure: ApiError = {
+        ok: false,
+        error: 'Processing history is temporarily unavailable. Try again shortly.',
+      };
+      res.status(503).json(failure);
+      return;
+    }
+
     if (!stored) {
       const error: ApiError = { ok: false, error: 'No processing run with that id.' };
       res.status(404).json(error);
@@ -580,6 +593,24 @@ export function createApp(db: DatabaseSync, options: AppOptions = {}): express.E
 
   app.get('/api/bulk/:runId/export.csv', sendExport('csv'));
   app.get('/api/bulk/:runId/export.xlsx', sendExport('xlsx'));
+
+  // Any unhandled route failure returns JSON rather than an HTML error page.
+  app.use(
+    (
+      error: unknown,
+      _req: express.Request,
+      res: express.Response,
+      next: express.NextFunction,
+    ) => {
+      if (res.headersSent) {
+        next(error);
+        return;
+      }
+      console.error('[address-intelligence] request failed', error);
+      const body: ApiError = { ok: false, error: 'The request could not be completed.' };
+      res.status(500).json(body);
+    },
+  );
 
   const clientDir = path.join(process.cwd(), 'dist', 'client');
   app.use(express.static(clientDir, { index: false, maxAge: '1h' }));

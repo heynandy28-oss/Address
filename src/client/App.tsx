@@ -111,7 +111,7 @@ export default function App() {
             <span className="dot" aria-hidden="true" />
             {state === 'loading' ? 'Connecting' : online ? 'System online' : 'API unreachable'}
           </span>
-          <span className="phase-pill">Phase {health?.phase ?? 0} · History</span>
+          <span className="phase-pill">Phase {health?.phase ?? 0} · Hardening</span>
           <button className="ghost-button" type="button" onClick={() => void load()}>
             Refresh
           </button>
