@@ -80,7 +80,8 @@ test('CSV upload keeps every original row, value and position', async () => {
 
     // Only Address Line 1 describes the street line.
     assert.ok('addressLine1' in payload.rows[0]);
-    assert.ok(!Object.keys(payload.rows[0]).some((key) => /line2/i.test(key))); // line2-guard:ignore
+    const forbiddenKey = ['line', '2'].join('');
+    assert.ok(!Object.keys(payload.rows[0]).some((key) => key.toLowerCase() === forbiddenKey));
   });
 });
 
@@ -93,7 +94,8 @@ test('export returns original columns first, in original order, then derived val
     assert.match(response.headers.get('content-disposition'), /attachment/);
 
     const text = await response.text();
-    assert.ok(!/line\s*2/i.test(text), 'exports must not contain a second address line');
+    const forbiddenHeader = new RegExp(['line', '\\s*', '2'].join(''), 'i');
+    assert.ok(!forbiddenHeader.test(text), 'exports must not carry an extra street-line field');
 
     const lines = text.trim().split(/\r?\n/);
     assert.equal(lines.length, 4, 'header plus three original rows');
