@@ -300,3 +300,155 @@ test('rejects absurdly long input at the documented limit', () => {
   const result = parseAddress('A'.repeat(MAX_LINE_LENGTH));
   assert.equal(typeof result.components.addressLine1, 'string');
 });
+
+/* ---------------------------------------------- street / city boundary (UK) */
+
+/**
+ * A trailing street suffix belongs to the street name. "St" is also the ISO
+ * code of Sao Tome and Principe, and an earlier resolver took it as the country,
+ * which cut "1A Leicester St" down to "1A Leicester". These fixtures pin the
+ * whole street name, numbered and unnumbered, with one-word and multi-word
+ * street names and every common suffix abbreviation.
+ */
+const UK_STREET_FIXTURES = [
+  {
+    name: 'numbered house, abbreviated suffix (mandatory regression)',
+    input: '1A Leicester St, Melton Mowbray LE13 0PP',
+    addressLine1: '1A Leicester St',
+    city: 'Melton Mowbray',
+    postcode: 'LE13 0PP',
+    suffix: 'St',
+  },
+  {
+    name: 'unnumbered street, abbreviated suffix (mandatory regression)',
+    input: 'Enfield St, Wigan WN5 8DB',
+    addressLine1: 'Enfield St',
+    city: 'Wigan',
+    postcode: 'WN5 8DB',
+    suffix: 'St',
+  },
+  {
+    name: 'numbered house, multi-word street name',
+    input: '42 Crouch End Hill, London N8 8DL',
+    addressLine1: '42 Crouch End Hill',
+    city: 'London',
+    postcode: 'N8 8DL',
+  },
+  {
+    name: 'numbered house, Lane suffix',
+    input: '15 Deansgate Ln, Manchester M3 2BW',
+    addressLine1: '15 Deansgate Ln',
+    city: 'Manchester',
+    postcode: 'M3 2BW',
+    suffix: 'Ln',
+  },
+  {
+    name: 'numbered house, Road suffix',
+    input: '8 Vicarage Rd, Leeds LS2 9JT',
+    addressLine1: '8 Vicarage Rd',
+    city: 'Leeds',
+    postcode: 'LS2 9JT',
+    suffix: 'Rd',
+  },
+  {
+    name: 'numbered house, Close suffix',
+    input: '3 Orchard Cl, Bristol BS8 4AA',
+    addressLine1: '3 Orchard Cl',
+    city: 'Bristol',
+    postcode: 'BS8 4AA',
+    suffix: 'Cl',
+  },
+  {
+    name: 'numbered house, Mount suffix',
+    input: '9 Beacon Mt, Sheffield S11 8RT',
+    addressLine1: '9 Beacon Mt',
+    city: 'Sheffield',
+    postcode: 'S11 8RT',
+    suffix: 'Mt',
+  },
+  {
+    name: 'two-part street line with multi-word name',
+    input: 'Flat 3, 27 Elm Grove Ave, Brighton BN2 3ES',
+    addressLine1: 'Flat 3, 27 Elm Grove Ave',
+    city: 'Brighton',
+    postcode: 'BN2 3ES',
+    suffix: 'Ave',
+  },
+];
+
+test('keeps the whole UK street name, including its suffix', () => {
+  for (const fixture of UK_STREET_FIXTURES) {
+    const result = parseAddress(fixture.input);
+    const components = result.components;
+
+    assert.equal(components.addressLine1, fixture.addressLine1, `${fixture.name}: street line`);
+    assert.equal(components.city, fixture.city, `${fixture.name}: city`);
+    assert.equal(components.postcode, fixture.postcode, `${fixture.name}: postcode`);
+    assert.equal(components.region, null, `${fixture.name}: no invented region`);
+    assert.equal(components.country, 'United Kingdom', `${fixture.name}: country`);
+    assert.equal(components.countryCode, 'GB', `${fixture.name}: country code`);
+
+    if (fixture.suffix) {
+      assert.ok(
+        components.addressLine1.endsWith(` ${fixture.suffix}`),
+        `${fixture.name}: the ${fixture.suffix} suffix must not be truncated`,
+      );
+    }
+  }
+});
+
+test('the mandatory Melton Mowbray line reports every expected component', () => {
+  const result = parseAddress('1A Leicester St, Melton Mowbray LE13 0PP');
+
+  assert.deepEqual(result.components, {
+    addressLine1: '1A Leicester St',
+    postcode: 'LE13 0PP',
+    city: 'Melton Mowbray',
+    region: null,
+    regionCode: null,
+    country: 'United Kingdom',
+    countryCode: 'GB',
+  });
+  assert.equal(result.components.addressLine1.includes('Leicester St'), true);
+  assert.equal(result.missingComponents.length, 0);
+  assert.ok(result.notes.some((note) => note.code === 'country-inferred-from-postcode'));
+  assert.equal(result.standardizedText, '1A Leicester St, Melton Mowbray, LE13 0PP, United Kingdom');
+});
+
+test('a street suffix is never mistaken for a country code', () => {
+  // Every blocked token doubles as an ISO code: ST, PL, DR, CL, MT, PT, CR, GD.
+  for (const [line, street] of [
+    ['1A Leicester St, Melton Mowbray LE13 0PP', '1A Leicester St'],
+    ['Enfield St, Wigan WN5 8DB', 'Enfield St'],
+    ['12 Bakery Pl, Bath BA1 1AA', '12 Bakery Pl'],
+    ['5 Harbour Dr, Plymouth PL1 3AB', '5 Harbour Dr'],
+  ]) {
+    const result = parseAddress(line);
+    assert.equal(result.components.addressLine1, street, line);
+    assert.notEqual(result.components.countryCode, 'ST', `${line}: St is a street suffix`);
+    assert.notEqual(result.components.countryCode, 'PL', `${line}: Pl is a street suffix`);
+    assert.notEqual(result.components.countryCode, 'DR', `${line}: Dr is a street suffix`);
+  }
+});
+
+test('a country code standing alone in its own segment still resolves', () => {
+  // The suffix guard must not break real country codes in a trailing segment.
+  const poland = parseAddress('ul. Marszalkowska 1, 00-001 Warszawa, PL');
+  assert.equal(poland.components.countryCode, 'PL');
+  assert.equal(poland.components.country, 'Poland');
+  assert.equal(poland.components.addressLine1, 'ul. Marszalkowska 1');
+  assert.equal(poland.components.city, 'Warszawa');
+
+  const portugal = parseAddress('Rua Augusta 100, 1100-053 Lisboa, PT');
+  assert.equal(portugal.components.countryCode, 'PT');
+  assert.equal(portugal.components.postcode, '1100-053');
+});
+
+test('a postcode shared by several countries never invents a country', () => {
+  const result = parseAddress('12 Hauptstrasse, 10117 Berlin');
+
+  assert.equal(result.components.postcode, '10117');
+  assert.equal(result.components.countryCode, null, 'a five-digit postcode is ambiguous');
+  assert.equal(result.components.country, null);
+  assert.ok(result.missingComponents.includes('country'));
+});
