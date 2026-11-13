@@ -2,7 +2,7 @@ import path from 'node:path';
 
 export const SERVICE_NAME = 'address-intelligence';
 export const SERVICE_VERSION = '0.1.0';
-export const PHASE = 4;
+export const PHASE = 5;
 export const ENGINE_NAME = 'deterministic-address-engine';
 export const ENGINE_VERSION = '0.4.0-deterministic';
 

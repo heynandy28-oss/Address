@@ -111,7 +111,7 @@ export default function App() {
             <span className="dot" aria-hidden="true" />
             {state === 'loading' ? 'Connecting' : online ? 'System online' : 'API unreachable'}
           </span>
-          <span className="phase-pill">Phase {health?.phase ?? 0} · Verification</span>
+          <span className="phase-pill">Phase {health?.phase ?? 0} · History</span>
           <button className="ghost-button" type="button" onClick={() => void load()}>
             Refresh
           </button>
@@ -425,8 +425,8 @@ export default function App() {
 
       <footer className="footer">
         <p>
-          Address Intelligence · Phase {health?.phase ?? 0} foundation build. Bulk upload, verification and
-          history arrive in later phases.
+          Address Intelligence · Phase {health?.phase ?? 0} — parsing, diagnostics, bulk processing,
+          evidence verification and processing history.
         </p>
         <p className="footer-credit">
           Postal reference data: GeoNames (CC BY 4.0) · Verification evidence: © OpenStreetMap
