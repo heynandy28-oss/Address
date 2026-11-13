@@ -98,7 +98,7 @@ const ROADMAP: RoadmapPhase[] = [
     phase: 5,
     title: 'Dashboard and processing history',
     summary: 'Run history, per-row results, filters and evidence review.',
-    status: 'in_progress',
+    status: 'done',
   },
   {
     phase: 6,
