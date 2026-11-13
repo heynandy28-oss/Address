@@ -11,11 +11,21 @@ import {
   SUPABASE_CONFIGURED,
 } from './config.js';
 import { getSchemaSnapshot } from './db/index.js';
+import {
+  BulkError,
+  buildExport,
+  getRun,
+  listRuns,
+  processBulk,
+} from './bulk/service.js';
 import { COUNTRY_FORMATS, COUNTRIES, REGIONS, lookupCountry } from './engine/countries.js';
 import { MAX_LINE_LENGTH, PARSER_VERSION, parseAddress } from './engine/parse.js';
 import { normalizeKey } from './engine/text.js';
 import type {
   ApiError,
+  BulkRunDetail,
+  BulkRunListResponse,
+  BulkUploadResponse,
   DataSourceInfo,
   HealthResponse,
   ParseResponse,
@@ -69,7 +79,7 @@ const ROADMAP: RoadmapPhase[] = [
     phase: 2,
     title: 'Missing and misplaced component detection',
     summary: 'Diagnostics for absent, contradictory and misplaced components with confidence scoring.',
-    status: 'in_progress',
+    status: 'done',
   },
   {
     phase: 3,
@@ -81,7 +91,7 @@ const ROADMAP: RoadmapPhase[] = [
     phase: 4,
     title: 'Bulk CSV and Excel processing',
     summary: 'Upload, original row preservation and original-order export.',
-    status: 'planned',
+    status: 'in_progress',
   },
   {
     phase: 5,
@@ -241,7 +251,6 @@ export function createApp(db: DatabaseSync): express.Express {
   });
 
   const clientDir = path.join(process.cwd(), 'dist', 'client');
-  app.use(express.static(clientDir, { index: false, maxAge: '1h' }));
 
   app.use((req, res, next) => {
     if (req.method !== 'GET' || req.path.startsWith('/api/')) {

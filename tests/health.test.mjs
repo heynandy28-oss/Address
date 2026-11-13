@@ -52,7 +52,7 @@ test('health, system metadata and 404 behaviour on the built server', async (t) 
   assert.equal(health.addressModel.line2Supported, false);
   assert.equal(health.storage.backend, 'sqlite');
   assert.equal(health.storage.ready, true);
-  assert.equal(health.storage.schemaVersion, 1);
+  assert.equal(health.storage.schemaVersion, 2);
   assert.ok(health.storage.tables.includes('address_rows'));
   assert.ok(health.storage.tables.includes('processing_runs'));
   assert.ok(health.storage.tables.includes('verification_cache'));

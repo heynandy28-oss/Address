@@ -7,7 +7,7 @@
  *  - `raw_row_json` preserves every original column and value verbatim.
  *  - Nothing is ever inferred into these columns without a stored source.
  */
-export const SCHEMA_VERSION = 1;
+export const SCHEMA_VERSION = 2;
 
 export const SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -21,6 +21,8 @@ CREATE TABLE IF NOT EXISTS processing_runs (
   source_filename  TEXT,
   source_format    TEXT NOT NULL DEFAULT 'single'
                      CHECK (source_format IN ('single', 'csv', 'xlsx')),
+  -- Original header row, in original column order.
+  source_headers_json TEXT,
   row_count        INTEGER NOT NULL DEFAULT 0,
   processed_count  INTEGER NOT NULL DEFAULT 0,
   status           TEXT NOT NULL DEFAULT 'pending'

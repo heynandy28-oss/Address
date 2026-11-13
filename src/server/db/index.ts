@@ -26,14 +26,27 @@ export function openDatabase(file: string): Db {
     db.exec('PRAGMA journal_mode = WAL;');
   }
   db.exec(SCHEMA_SQL);
-
-  const existing = db.prepare('SELECT COUNT(*) AS n FROM schema_migrations').get() as { n: number };
-  if (!existing || existing.n === 0) {
-    db.prepare('INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)')
-      .run(SCHEMA_VERSION, new Date().toISOString());
-  }
+  migrate(db);
 
   return db;
+}
+
+/**
+ * Idempotent upgrades for databases created by an earlier schema version.
+ * `CREATE TABLE IF NOT EXISTS` cannot add a column to an existing table, so
+ * new columns are added explicitly and the current version is recorded.
+ */
+function migrate(db: Db): void {
+  const runColumns = db.prepare('PRAGMA table_info(processing_runs)').all() as Array<{
+    name: string;
+  }>;
+
+  if (!runColumns.some((column) => column.name === 'source_headers_json')) {
+    db.exec('ALTER TABLE processing_runs ADD COLUMN source_headers_json TEXT');
+  }
+
+  db.prepare('INSERT OR REPLACE INTO schema_migrations (version, applied_at) VALUES (?, ?)')
+    .run(SCHEMA_VERSION, new Date().toISOString());
 }
 
 /** Introspection used by /api/health and by the Address Line 1 guard test. */

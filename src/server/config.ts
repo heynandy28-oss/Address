@@ -2,9 +2,9 @@ import path from 'node:path';
 
 export const SERVICE_NAME = 'address-intelligence';
 export const SERVICE_VERSION = '0.1.0';
-export const PHASE = 2;
+export const PHASE = 4;
 export const ENGINE_NAME = 'deterministic-address-engine';
-export const ENGINE_VERSION = '0.2.0-deterministic';
+export const ENGINE_VERSION = '0.3.0-deterministic';
 
 export const HOST = '0.0.0.0';
 export const PORT = Number(process.env.PORT ?? 3000);
