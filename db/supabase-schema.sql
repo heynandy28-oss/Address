@@ -15,6 +15,8 @@ create table if not exists public.processing_runs (
   source_filename  text,
   source_format    text not null default 'single'
                      check (source_format in ('single', 'csv', 'xlsx')),
+  -- Original header row, in original column order, so exports reproduce it.
+  source_headers   jsonb,
   row_count        integer not null default 0,
   processed_count  integer not null default 0,
   status           text not null default 'pending'
@@ -50,6 +52,9 @@ create table if not exists public.address_rows (
   created_at          timestamptz not null default now(),
   unique (run_id, row_index)
 );
+
+-- Projects created before the header column existed pick it up here.
+alter table public.processing_runs add column if not exists source_headers jsonb;
 
 create index if not exists idx_address_rows_run_order
   on public.address_rows (run_id, row_index);
