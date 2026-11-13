@@ -102,6 +102,11 @@ export interface StorageInfo {
   schemaVersion: number;
   tables: string[];
   durable: boolean;
+  /** True when the durable backend is failing and the local fallback is in use. */
+  degraded: boolean;
+  /** Last backend error, kept for diagnosis. Null while healthy. */
+  lastError: string | null;
+  lastErrorAt: string | null;
 }
 
 export interface HealthResponse {
@@ -119,9 +124,37 @@ export interface HealthResponse {
   };
   storage: StorageInfo;
   integrations: {
-    supabase: { configured: boolean; purpose: string; required: boolean };
+    supabase: {
+      configured: boolean;
+      purpose: string;
+      required: boolean;
+      /** Cached reachability probe; null when Supabase is not configured. */
+      reachable: boolean | null;
+    };
     llm: { configured: boolean; purpose: string; required: boolean };
   };
+  limits: {
+    bulk: { maxBytes: number; maxRows: number; maxColumns: number };
+    usage: UsageSnapshot;
+  };
+}
+
+/** Free-plan allowance counters, reported by /api/usage and /api/health. */
+export interface UsageSnapshot {
+  day: string;
+  limits: { maxRowsPerDay: number; maxRunsPerDay: number };
+  rowsUsed: number;
+  rowsRemaining: number;
+  runsUsed: number;
+  runsRemaining: number;
+  resetsAt: string;
+}
+
+export interface UsageResponse {
+  ok: true;
+  usage: UsageSnapshot;
+  rateLimits: Record<string, { windowMs: number; max: number }>;
+  upload: { maxBytes: number; maxRows: number; maxColumns: number };
 }
 
 export interface DataSourceInfo {

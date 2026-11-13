@@ -119,6 +119,25 @@ function splitRecords(text: string, delimiter: Delimiter): string[][] {
   return records;
 }
 
+/**
+ * True when the text ends inside an open quoted field, which means the file
+ * was truncated or mis-quoted and cannot be read reliably.
+ */
+export function hasUnbalancedQuotes(text: string): boolean {
+  let inQuotes = false;
+
+  for (let i = 0; i < text.length; i += 1) {
+    if (text[i] !== '"') continue;
+    if (inQuotes && text[i + 1] === '"') {
+      i += 1;
+      continue;
+    }
+    inQuotes = !inQuotes;
+  }
+
+  return inQuotes;
+}
+
 function isEmptyRecord(record: string[]): boolean {
   return record.every((value) => value.trim() === '');
 }

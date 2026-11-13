@@ -2,7 +2,7 @@ import path from 'node:path';
 
 export const SERVICE_NAME = 'address-intelligence';
 export const SERVICE_VERSION = '0.1.0';
-export const PHASE = 5;
+export const PHASE = 6;
 export const ENGINE_NAME = 'deterministic-address-engine';
 export const ENGINE_VERSION = '0.4.0-deterministic';
 
@@ -19,3 +19,17 @@ export const SUPABASE_CONFIGURED = Boolean(SUPABASE_URL && SUPABASE_SERVICE_ROLE
 
 /** Optional future LLM assist. Never required, never on the critical path. */
 export const LLM_CONFIGURED = Boolean(process.env.LLM_PROVIDER_URL && process.env.LLM_API_KEY);
+
+/* ------------------------------------------------ Phase 6: hardening caps -- */
+
+function positiveInt(value: string | undefined, fallback: number): number {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : fallback;
+}
+
+/**
+ * Free-plan daily allowances, sized for 1 GB RAM / 1 vCPU. Overridable so a
+ * deployment can tighten or relax them without a code change.
+ */
+export const DAILY_ROW_BUDGET = positiveInt(process.env.BULK_DAILY_ROW_BUDGET, 25_000);
+export const DAILY_RUN_BUDGET = positiveInt(process.env.BULK_DAILY_RUN_BUDGET, 50);
