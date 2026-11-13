@@ -6,6 +6,7 @@ import type {
   SystemInfoResponse,
 } from '../shared/types.js';
 import { BulkPanel } from './BulkPanel.js';
+import { VerifyPanel } from './VerifyPanel.js';
 
 const COMPONENT_ROWS: { key: keyof ParsedComponents; label: string }[] = [
   { key: 'addressLine1', label: 'Address line 1' },
@@ -264,6 +265,8 @@ export default function App() {
             <strong>Could not read system status.</strong> {error}
           </div>
         )}
+
+        <VerifyPanel />
 
         <BulkPanel />
 
