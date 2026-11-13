@@ -218,3 +218,45 @@ export interface BulkRunListResponse {
   ok: true;
   runs: BulkRunSummary[];
 }
+
+/** Free public sources this system is allowed to consult. */
+export type EvidenceSource = 'geonames-postal' | 'nominatim' | 'photon';
+
+/**
+ * One piece of real, openable evidence behind a verification decision.
+ * Records are only ever produced from an actual lookup; nothing is synthesised.
+ */
+export interface EvidenceRecord {
+  source: EvidenceSource;
+  sourceLabel: string;
+  /** Human-openable page that proves the match. */
+  evidenceUrl: string;
+  /** Exact upstream request, when a live service was queried. */
+  queryUrl: string | null;
+  matchedOn: 'postcode' | 'place' | 'country';
+  detail: string;
+  license: string;
+  retrievedAt: string;
+}
+
+/** How closely the supplied components agree with the evidence found. */
+export type VerificationAgreement = 'full' | 'partial' | 'conflict' | 'none' | 'not_applicable';
+
+export interface VerificationResult {
+  verificationStatus: VerificationStatus;
+  statusReason: string;
+  agreement: VerificationAgreement;
+  evidence: EvidenceRecord[];
+  checkedSources: EvidenceSource[];
+  /** True when a throttled public API was called for this single address. */
+  remoteAttempted: boolean;
+  /** Populated only when the remote lookup could not be completed. */
+  remoteError: string | null;
+  checkedAt: string;
+}
+
+export interface VerifyResponse {
+  ok: true;
+  result: ParsedAddress;
+  verification: VerificationResult;
+}
