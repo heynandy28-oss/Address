@@ -18,8 +18,7 @@ const readXlsxFile = readXlsxFileModule as unknown as (input: Buffer) => Promise
 
 const writeXlsxFile = writeXlsxFileModule as unknown as (
   data: ExcelCell[][],
-  options: { buffer: true },
-) => Promise<Buffer>;
+) => { toBuffer: () => Promise<Buffer> };
 
 export function cellToText(cell: unknown): string {
   if (cell === null || cell === undefined) return '';
@@ -40,6 +39,7 @@ export async function writeXlsx(rows: string[][]): Promise<Buffer> {
   const data: ExcelCell[][] = rows.map((row) =>
     row.map((value) => (value === '' ? null : { value, type: String })),
   );
-  const buffer = await writeXlsxFile(data, { buffer: true });
+  // The Node entry point returns a builder; `toBuffer()` produces the workbook.
+  const buffer = await writeXlsxFile(data).toBuffer();
   return buffer;
 }
