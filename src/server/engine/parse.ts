@@ -32,6 +32,7 @@ import {
   stripTrailingPunctuation,
 } from './text.js';
 import { assessAddress } from './diagnostics.js';
+import { findCountryByPlaceName } from '../verify/geonames.js';
 
 export const PARSER_VERSION = '0.2.0-phase2';
 
@@ -176,6 +177,100 @@ function postcodePatterns(): { code: string; pattern: RegExp }[] {
  * undetermined, while a UK postcode such as "LE13 0PP" fits only GB. This is
  * evidence from the input, never an invented value.
  */
+/* --------------------------------------------------------- organizations --- */
+
+/**
+ * Legal-form tokens that mark a segment as an organization rather than a postal
+ * address. Matching is on whole words, so "GmbH" hits while "GmbHof" does not.
+ */
+const ORG_LEGAL_FORM =
+  /(?:^|[\s.,&/-])(?:gmbh|mbh|ag|ug|kg|ohg|kgaa|gbr|ltd|limited|llc|llp|inc|incorporated|corp|corporation|company|co|plc|pty|pte|pvt|ltda|sarl|sas|sa|bv|nv|cv|spa|srl|oy|oyj|ab|kk|sdn|bhd)(?:$|[\s.,&/-])/i;
+
+/** Trailing words that only make sense inside a company name. */
+const ORG_TAIL =
+  /(?:^|\s)(?:holdings|group|services|solutions|technologies|industries|logistics|consulting|enterprises|systems|partners|company|corporation|corp|gmbh|ltd|limited|llc|inc|plc|ag|sarl|sas|bv|nv|spa|srl|oy|ab|kk|pty|pte|ltda)$/i;
+
+/** Street tokens that prove a segment is a postal address, never an employer. */
+const STREET_TAIL =
+  /(?:^|\s)(?:st|street|rd|road|ave|avenue|ln|lane|dr|drive|ct|court|pl|place|blvd|boulevard|way|ter|terrace|hwy|highway|sq|square|cres|crescent|close|gardens|grove|walk|mews|quay|row|hill|park|stra(?:ß|ss)e|weg|platz|gasse|allee|damm|ring|ufer|steig|laan|straat|gracht|kade|plein|rue|via|viale|piazza|calle|avenida|rua|travessa|gatan|gade|vej|tie|ulitsa|prospekt)$/i;
+
+/** True when a segment carries postal-address evidence and must be kept. */
+function hasStreetEvidence(segment: string): boolean {
+  const text = collapseWhitespace(segment);
+  if (!text) return false;
+  // A leading house number, or a trailing one such as "Kolonnenstraße 8".
+  if (/^\d/.test(text)) return true;
+  if (/(?:^|\s)\d+[a-z]?$/i.test(text)) return true;
+  if (postcodeCandidates(text).length > 0) return true;
+  const words = text.split(' ');
+  return STREET_TAIL.test(words[words.length - 1] ?? '');
+}
+
+/** True when a segment names an organization rather than an address. */
+function looksLikeOrganization(segment: string): boolean {
+  const text = collapseWhitespace(segment);
+  if (!text) return false;
+  return ORG_LEGAL_FORM.test(text) || ORG_TAIL.test(text);
+}
+
+/**
+ * Drops organization segments ("CellCore GmbH") so only postal components are
+ * parsed. A segment with street or postcode evidence is always kept, so a real
+ * street or building name can never be removed as a company, and the last
+ * remaining segment is never dropped either.
+ */
+function stripOrganizationSegments(segments: string[], notes: ParseNote[]): string[] {
+  if (segments.length < 2) return segments;
+  const kept: string[] = [];
+  const removed: string[] = [];
+  for (let index = 0; index < segments.length; index += 1) {
+    const segment = segments[index];
+    const remaining = segments.length - index - 1;
+    const droppable =
+      looksLikeOrganization(segment) &&
+      !hasStreetEvidence(segment) &&
+      kept.length + remaining >= 1;
+    if (droppable) removed.push(segment);
+    else kept.push(segment);
+  }
+  if (removed.length === 0) return segments;
+  notes.push({
+    code: 'organization-removed',
+    severity: 'info',
+    message: `Removed organization name ${removed
+      .map((item) => `"${item}"`)
+      .join(', ')}; only postal-address components are kept and the original input stays available as raw text.`,
+  });
+  return kept;
+}
+
+/**
+ * Country for a place name the bundled GeoNames seed knows in exactly one
+ * country. Used only when the postcode alone cannot settle the country, and
+ * only for evidence the seed actually contains.
+ */
+function inferCountryFromCity(
+  segments: string[],
+): { code: string; name: string; place: string } | null {
+  for (let index = segments.length - 1; index >= 0; index -= 1) {
+    let text = segments[index];
+    for (const candidate of postcodeCandidates(text)) {
+      text = text.replace(
+        new RegExp(candidate.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i'),
+        ' ',
+      );
+    }
+    const place = collapseWhitespace(text).replace(/^[,\s]+|[,\s]+$/g, '');
+    if (!place || !isPlaceLike(place)) continue;
+    const code = findCountryByPlaceName(place);
+    if (!code) continue;
+    const country = lookupCountry(code.toLowerCase());
+    if (!country) continue;
+    return { code: country.code, name: country.name, place };
+  }
+  return null;
+}
+
 function inferCountryFromPostcode(segments: string[]): { code: string; name: string } | null {
   for (let index = segments.length - 1; index >= 0; index -= 1) {
     for (const candidate of postcodeCandidates(segments[index])) {
@@ -249,6 +344,7 @@ export function parseAddress(rawLine: string, options: ParseOptions = {}): Parse
 
   let segments = splitSegments(normalizedText);
   if (segments.length === 0) segments = [normalizedText];
+  segments = stripOrganizationSegments(segments, notes);
 
   // --- country -------------------------------------------------------------
   const hintKey = options.countryHint ? normalizeKey(options.countryHint) : '';
@@ -321,6 +417,19 @@ export function parseAddress(rawLine: string, options: ParseOptions = {}): Parse
         severity: 'info',
         message: `No country was written, but the postcode matches only ${inferred.name}, so the country was taken from the postcode pattern.`,
       });
+    } else {
+      const fromCity = inferCountryFromCity(segments);
+      if (fromCity) {
+        components.country = fromCity.name;
+        components.countryCode = fromCity.code;
+        bases.country = 'country-hint';
+        bases.countryCode = 'country-hint';
+        notes.push({
+          code: 'country-inferred-from-city',
+          severity: 'info',
+          message: `No country was written and the postcode is not unique to one country, but the bundled GeoNames seed lists "${fromCity.place}" only in ${fromCity.name}, so the country was taken from that evidence.`,
+        });
+      }
     }
   }
 
