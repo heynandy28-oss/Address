@@ -57,6 +57,24 @@ const REGION_NAME_KEYS = new Set(
 );
 
 /**
+ * ISO 3166-2 codes that belong to exactly one country. A unique code is real
+ * evidence of a region even when the country itself is absent, so it is used
+ * instead of guessing a country.
+ */
+const UNIQUE_REGION_CODES = new Map<string, { code: string; name: string } | null>();
+for (const regions of Object.values(REGIONS)) {
+  for (const region of regions) {
+    const key = normalizeKey(region.code);
+    const existing = UNIQUE_REGION_CODES.get(key);
+    UNIQUE_REGION_CODES.set(key, existing === undefined ? { code: region.code, name: region.name } : null);
+  }
+}
+
+function uniqueRegionForCode(token: string): { code: string; name: string } | null {
+  return UNIQUE_REGION_CODES.get(normalizeKey(token)) ?? null;
+}
+
+/**
  * Matches a country at the END of a segment, longest candidate first, so
  * "United States of America" wins over "America".
  */
@@ -272,7 +290,13 @@ export function parseAddress(rawLine: string, options: ParseOptions = {}): Parse
     for (let index = segments.length - 1; index >= 1; index -= 1) {
       const segment = segments[index];
       const direct = lookupRegion(regionSet, segment);
-      if (direct) {
+      // A region name is only taken when another locality part remains to be
+      // the city, otherwise a city-state such as Berlin would be swallowed.
+      const otherLocality = segments.some(
+        (candidate, candidateIndex) =>
+          candidateIndex !== index && candidateIndex >= 1 && !hasDigit(candidate),
+      );
+      if (direct && (direct.matchedBy === 'code' || otherLocality)) {
         components.region = direct.name;
         components.regionCode = direct.code;
         bases.region = direct.matchedBy === 'code' ? 'region-code' : 'region-name';
@@ -346,7 +370,32 @@ export function parseAddress(rawLine: string, options: ParseOptions = {}): Parse
       }
     }
 
-    if (!regionSet && /^[A-Z]{2,3}$/.test(cityCandidate)) {
+    if (!regionSet && !components.region) {
+      const uniqueRegion = uniqueRegionForCode(cityCandidate);
+      if (uniqueRegion) {
+        components.region = uniqueRegion.name;
+        components.regionCode = uniqueRegion.code;
+        bases.region = 'region-code';
+        bases.regionCode = 'region-code';
+        notes.push({
+          code: 'region-from-unique-code',
+          severity: 'info',
+          message: `"${cityCandidate}" is an ISO 3166-2 region code used by exactly one country, so it was read as a region; the country itself was not determined.`,
+        });
+        segments = segments.slice(0, -1);
+        cityCandidate = segments[segments.length - 1];
+      }
+    }
+
+    if (segments.length <= 1) {
+      components.addressLine1 = segments[0];
+      bases.addressLine1 = 'position-heuristic';
+      notes.push({
+        code: 'city-not-detected',
+        severity: 'warning',
+        message: 'No separate city could be identified in the address line.',
+      });
+    } else if (!regionSet && /^[A-Z]{2,3}$/.test(cityCandidate)) {
       components.addressLine1 = segments.join(', ');
       bases.addressLine1 = 'position-heuristic';
       notes.push({
