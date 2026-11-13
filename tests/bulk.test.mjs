@@ -16,7 +16,8 @@ function startServer() {
   const db = openDatabase(':memory:');
   const app = createApp(db);
   return new Promise((resolve) => {
-    const server = app.listen(0, '127.0.0.1', () => {
+    // Bind all interfaces: container-safe, and still reachable via the loopback URL below.
+    const server = app.listen(0, '0.0.0.0', () => {
       const address = server.address();
       resolve({ server, db, base: `http://127.0.0.1:${address.port}` });
     });
