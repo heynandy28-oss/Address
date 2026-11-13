@@ -9,16 +9,10 @@
  *  - Only `address_line1` describes the street line.
  */
 import { randomUUID } from 'node:crypto';
-import type { DatabaseSync } from 'node:sqlite';
-import { ENGINE_VERSION } from '../config.js';
 import { MAX_LINE_LENGTH, parseAddress } from '../engine/parse.js';
 import { normalizeKey } from '../engine/text.js';
-import type {
-  AddressDiagnostic,
-  BulkRowRecord,
-  BulkRunSummary,
-  VerificationStatus,
-} from '../../shared/types.js';
+import type { BulkRowRecord, BulkRunSummary } from '../../shared/types.js';
+import type { HistoryStore } from '../history/store.js';
 import { parseDelimited, toCsv } from './csv.js';
 import { readXlsx, writeXlsx } from './xlsx.js';
 
@@ -248,7 +242,7 @@ function summarize(
   };
 }
 
-export async function processBulk(db: DatabaseSync, input: BulkInput): Promise<BulkOutcome> {
+export async function processBulk(store: HistoryStore, input: BulkInput): Promise<BulkOutcome> {
   if (input.buffer.length === 0) {
     throw new BulkError('The uploaded file is empty.');
   }
@@ -305,180 +299,9 @@ export async function processBulk(db: DatabaseSync, input: BulkInput): Promise<B
     createdAt,
   );
 
-  const insertRun = db.prepare(
-    `INSERT INTO processing_runs
-      (id, label, source_filename, source_format, source_headers_json, row_count,
-       processed_count, status, engine_version, created_at, completed_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-  );
-
-  const insertRow = db.prepare(
-    `INSERT INTO address_rows
-      (id, run_id, row_index, source_row_number, raw_row_json, raw_address_text,
-       address_line1, postcode, city, region, country, country_code, confidence,
-       verification_status, diagnostics_json, evidence_json, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-  );
-
-  db.exec('BEGIN');
-  try {
-    insertRun.run(
-      runId,
-      null,
-      input.filename,
-      format,
-      JSON.stringify(table.headers),
-      records.length,
-      run.processedCount,
-      'completed',
-      ENGINE_VERSION,
-      createdAt,
-      createdAt,
-    );
-
-    for (const record of records) {
-      insertRow.run(
-        randomUUID(),
-        runId,
-        record.rowIndex,
-        record.sourceRowNumber,
-        JSON.stringify(record.originalRow),
-        record.rawAddressText,
-        record.addressLine1,
-        record.postcode,
-        record.city,
-        record.region,
-        record.country,
-        record.countryCode,
-        record.confidence,
-        record.verificationStatus,
-        JSON.stringify(record.diagnostics),
-        null,
-        createdAt,
-      );
-    }
-
-    db.exec('COMMIT');
-  } catch (error) {
-    db.exec('ROLLBACK');
-    throw error;
-  }
+  await store.saveRun(run, records);
 
   return { run, rows: records.slice(0, PREVIEW_LIMIT), previewLimit: PREVIEW_LIMIT };
-}
-
-interface RunRow {
-  id: string;
-  label: string | null;
-  source_filename: string | null;
-  source_format: string;
-  source_headers_json: string | null;
-  row_count: number;
-  processed_count: number;
-  status: string;
-  created_at: string;
-}
-
-function rowToSummary(row: RunRow): BulkRunSummary {
-  const headers = row.source_headers_json
-    ? (JSON.parse(row.source_headers_json) as string[])
-    : [];
-  return {
-    runId: row.id,
-    label: row.label,
-    sourceFilename: row.source_filename,
-    sourceFormat: row.source_format === 'xlsx' ? 'xlsx' : 'csv',
-    addressColumn: '',
-    addressColumnIndex: -1,
-    headers,
-    rowCount: row.row_count,
-    processedCount: row.processed_count,
-    needsAttention: 0,
-    averageConfidence: 0,
-    skippedEmptyRows: 0,
-    createdAt: row.created_at,
-  };
-}
-
-interface StoredRow {
-  row_index: number;
-  source_row_number: number | null;
-  raw_row_json: string;
-  raw_address_text: string | null;
-  address_line1: string | null;
-  postcode: string | null;
-  city: string | null;
-  region: string | null;
-  country: string | null;
-  country_code: string | null;
-  confidence: number | null;
-  verification_status: string | null;
-  diagnostics_json: string | null;
-}
-
-function storedToRecord(row: StoredRow): BulkRowRecord {
-  return {
-    rowIndex: row.row_index,
-    sourceRowNumber: row.source_row_number ?? row.row_index + 2,
-    originalRow: JSON.parse(row.raw_row_json) as string[],
-    rawAddressText: row.raw_address_text ?? '',
-    addressLine1: row.address_line1,
-    postcode: row.postcode,
-    city: row.city,
-    region: row.region,
-    country: row.country,
-    countryCode: row.country_code,
-    confidence: row.confidence,
-    verificationStatus: (row.verification_status as VerificationStatus | null) ?? null,
-    diagnostics: row.diagnostics_json
-      ? (JSON.parse(row.diagnostics_json) as AddressDiagnostic[])
-      : [],
-  };
-}
-
-export interface StoredRun {
-  run: BulkRunSummary;
-  rows: BulkRowRecord[];
-}
-
-export function getRun(db: DatabaseSync, runId: string, limit = 200): StoredRun | null {
-  const runRow = db.prepare('SELECT * FROM processing_runs WHERE id = ?').get(runId) as
-    | RunRow
-    | undefined;
-  if (!runRow) return null;
-
-  const rows = db
-    .prepare('SELECT * FROM address_rows WHERE run_id = ? ORDER BY row_index ASC LIMIT ?')
-    .all(runId, limit) as unknown as StoredRow[];
-
-  const records = rows.map(storedToRecord);
-  const summary = rowToSummary(runRow);
-  const scored = records.filter((record) => record.confidence !== null);
-
-  return {
-    run: {
-      ...summary,
-      needsAttention: records.filter(
-        (record) =>
-          record.verificationStatus === 'conflicting' ||
-          record.diagnostics.some((diagnostic) => diagnostic.severity === 'error'),
-      ).length,
-      averageConfidence:
-        scored.length === 0
-          ? 0
-          : Math.round(
-              scored.reduce((total, record) => total + (record.confidence ?? 0), 0) / scored.length,
-            ),
-    },
-    rows: records,
-  };
-}
-
-export function listRuns(db: DatabaseSync, limit = 20): BulkRunSummary[] {
-  const rows = db
-    .prepare('SELECT * FROM processing_runs ORDER BY created_at DESC LIMIT ?')
-    .all(limit) as unknown as RunRow[];
-  return rows.map(rowToSummary);
 }
 
 const DERIVED_HEADERS = [
@@ -526,16 +349,11 @@ export interface ExportFile {
 }
 
 export async function buildExport(
-  db: DatabaseSync,
+  store: HistoryStore,
   runId: string,
   format: 'csv' | 'xlsx',
 ): Promise<ExportFile | null> {
-  const runRow = db.prepare('SELECT * FROM processing_runs WHERE id = ?').get(runId) as
-    | RunRow
-    | undefined;
-  if (!runRow) return null;
-
-  const stored = getRun(db, runId, Number.MAX_SAFE_INTEGER);
+  const stored = await store.getRun(runId, Number.MAX_SAFE_INTEGER);
   if (!stored) return null;
 
   const matrix = buildExportRows(stored.run.headers, stored.rows);

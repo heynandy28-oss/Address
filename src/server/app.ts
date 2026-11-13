@@ -14,10 +14,9 @@ import { getSchemaSnapshot } from './db/index.js';
 import {
   BulkError,
   buildExport,
-  getRun,
-  listRuns,
   processBulk,
 } from './bulk/service.js';
+import { createHistoryStore } from './history/store.js';
 import { COUNTRY_FORMATS, COUNTRIES, REGIONS, lookupCountry } from './engine/countries.js';
 import { MAX_LINE_LENGTH, PARSER_VERSION, parseAddress } from './engine/parse.js';
 import { normalizeKey } from './engine/text.js';
@@ -146,6 +145,7 @@ function sendBulkError(res: express.Response, error: unknown): void {
 
 export function createApp(db: DatabaseSync): express.Express {
   const app = express();
+  const history = createHistoryStore(db);
   app.disable('x-powered-by');
   app.use(express.json({ limit: '1mb' }));
 
@@ -166,11 +166,11 @@ export function createApp(db: DatabaseSync): express.Express {
         enforcedBy: 'schema + API contract + repository guard test',
       },
       storage: {
-        backend: 'sqlite',
+        backend: history.backend,
         ready: snapshot.tables.length > 0,
         schemaVersion: snapshot.schemaVersion,
         tables: snapshot.tables,
-        durable: SUPABASE_CONFIGURED,
+        durable: history.durable,
       },
       integrations: {
         supabase: {
@@ -366,7 +366,7 @@ export function createApp(db: DatabaseSync): express.Express {
         countryHint = hintHeader;
       }
 
-      const outcome = await processBulk(db, {
+      const outcome = await processBulk(history, {
         filename,
         buffer: req.body,
         column,
@@ -390,13 +390,14 @@ export function createApp(db: DatabaseSync): express.Express {
     }
   });
 
-  app.get('/api/bulk/runs', (_req, res) => {
-    const body: BulkRunListResponse = { ok: true, runs: listRuns(db, 20) };
+  app.get('/api/bulk/runs', async (_req, res) => {
+    const runs = await history.listRuns(20);
+    const body: BulkRunListResponse = { ok: true, runs };
     res.json(body);
   });
 
-  app.get('/api/bulk/:runId', (req, res) => {
-    const stored = getRun(db, routeParam(req.params.runId), 200);
+  app.get('/api/bulk/:runId', async (req, res) => {
+    const stored = await history.getRun(routeParam(req.params.runId), 200);
     if (!stored) {
       const error: ApiError = { ok: false, error: 'No processing run with that id.' };
       res.status(404).json(error);
@@ -410,7 +411,7 @@ export function createApp(db: DatabaseSync): express.Express {
   const sendExport = (format: 'csv' | 'xlsx') =>
     async (req: express.Request, res: express.Response): Promise<void> => {
       try {
-        const file = await buildExport(db, routeParam(req.params.runId), format);
+        const file = await buildExport(history, routeParam(req.params.runId), format);
         if (!file) {
           const error: ApiError = { ok: false, error: 'No processing run with that id.' };
           res.status(404).json(error);
