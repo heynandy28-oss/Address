@@ -59,6 +59,9 @@ export const POSTAL_SEED_LICENSE = 'GeoNames postal code dataset, CC BY 4.0';
 
 const BY_POSTCODE = new Map<string, PostalEntry[]>();
 
+/** Place name (accent-folded) to the countries the seed lists it in. */
+const BY_PLACE = new Map<string, Set<string>>();
+
 /** Comparable form of a postcode: uppercase letters and digits only. */
 export function normalizePostcode(value: string): string {
   return value.toUpperCase().replace(/[^A-Z0-9]/g, '');
@@ -74,6 +77,24 @@ for (const [countryCode, postcode, placeName, adminName1] of SEED_ROWS) {
   const existing = BY_POSTCODE.get(key);
   if (existing) existing.push(entry);
   else BY_POSTCODE.set(key, [entry]);
+
+  const placeKey = normalizeKey(placeName);
+  const countries = BY_PLACE.get(placeKey);
+  if (countries) countries.add(countryCode);
+  else BY_PLACE.set(placeKey, new Set([countryCode]));
+}
+
+/**
+ * Country for a place name the bundled seed knows in exactly one country.
+ *
+ * Returns null for an unknown place or one that spans several countries, so the
+ * caller reports "no evidence" instead of guessing a country.
+ */
+export function findCountryByPlaceName(place: string): string | null {
+  if (!place) return null;
+  const countries = BY_PLACE.get(normalizeKey(place));
+  if (!countries || countries.size !== 1) return null;
+  return [...countries][0] ?? null;
 }
 
 /** Number of bundled postcode rows; shown in the capabilities endpoint. */
