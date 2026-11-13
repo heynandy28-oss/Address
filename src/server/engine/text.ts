@@ -18,11 +18,21 @@ export function collapseWhitespace(value: string): string {
   return value.replace(MULTI_SPACE, ' ').trim();
 }
 
-/** Canonical form of a free-form address line. */
+/**
+ * Canonical display form of a free-form address line.
+ *
+ * Diacritics are preserved ("São Paulo" stays readable) because matching uses
+ * `normalizeKey`, which removes them. Newlines are folded into commas so that
+ * a multi-line address collapses into the single address line the model allows.
+ */
 export function normalizeLine(value: string): string {
   if (typeof value !== 'string') return '';
-  const unaccented = unaccent(value).replace(DASH_VARIANTS, '-');
-  return collapseWhitespace(unaccented).replace(/^[,;.\s]+/, '').replace(/[,;.\s]+$/, '');
+  const canonical = value
+    .normalize('NFC')
+    .replace(DASH_VARIANTS, '-')
+    .replace(/\r?\n+/g, ', ')
+    .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, ' ');
+  return collapseWhitespace(canonical).replace(/^[,;.\s]+/, '').replace(/[,;.\s]+$/, '');
 }
 
 /** Comparison key: accent-free, lowercase, alphanumeric words only. */
