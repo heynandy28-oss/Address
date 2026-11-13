@@ -157,3 +157,64 @@ export interface SystemInfoResponse {
   roadmap: RoadmapPhase[];
   guarantees: string[];
 }
+
+/* ------------------------------------------------------------------ *
+ * Bulk processing (Phase 3)
+ * ------------------------------------------------------------------ */
+
+/** One processed input row. The original cells are kept exactly as supplied. */
+export interface BulkRowRecord {
+  /** 0-based position in the original file; never re-ordered. */
+  rowIndex: number;
+  /** 1-based row number in the file, header included. */
+  sourceRowNumber: number;
+  /** Every original cell value, in the original column order. */
+  originalRow: string[];
+  /** The address text exactly as supplied in the address column. */
+  rawAddressText: string;
+  addressLine1: string | null;
+  postcode: string | null;
+  city: string | null;
+  region: string | null;
+  country: string | null;
+  countryCode: string | null;
+  confidence: number | null;
+  verificationStatus: VerificationStatus | null;
+  diagnostics: AddressDiagnostic[];
+}
+
+export interface BulkRunSummary {
+  runId: string;
+  label: string | null;
+  sourceFilename: string | null;
+  sourceFormat: 'csv' | 'xlsx';
+  /** Header of the column that was parsed as the address. */
+  addressColumn: string;
+  addressColumnIndex: number;
+  headers: string[];
+  rowCount: number;
+  processedCount: number;
+  needsAttention: number;
+  averageConfidence: number;
+  skippedEmptyRows: number;
+  createdAt: string;
+}
+
+export interface BulkUploadResponse {
+  ok: true;
+  run: BulkRunSummary;
+  rows: BulkRowRecord[];
+  previewLimit: number;
+  exports: { csv: string; xlsx: string };
+}
+
+export interface BulkRunDetail {
+  ok: true;
+  run: BulkRunSummary;
+  rows: BulkRowRecord[];
+}
+
+export interface BulkRunListResponse {
+  ok: true;
+  runs: BulkRunSummary[];
+}
