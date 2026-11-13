@@ -28,6 +28,21 @@ export interface StoredRun {
   rows: BulkRowRecord[];
 }
 
+export interface HistoryStatus {
+  backend: 'sqlite' | 'supabase';
+  durable: boolean;
+  /** True when the durable backend is failing and the local fallback is in use. */
+  degraded: boolean;
+  lastError: string | null;
+  lastErrorAt: string | null;
+  lastSuccessAt: string | null;
+}
+
+export interface HistoryProbe {
+  ok: boolean;
+  error: string | null;
+}
+
 export interface HistoryStore {
   backend: 'sqlite' | 'supabase';
   /** True when history survives a redeploy. */
@@ -37,6 +52,10 @@ export interface HistoryStore {
   saveRun(run: BulkRunSummary, records: BulkRowRecord[]): Promise<void>;
   listRuns(limit?: number): Promise<BulkRunSummary[]>;
   getRun(runId: string, limit?: number): Promise<StoredRun | null>;
+  /** Current health, including whether the durable backend is degraded. */
+  describe(): HistoryStatus;
+  /** Cheap reachability probe for the durable backend. */
+  probe(): Promise<HistoryProbe>;
 }
 
 function errorMessage(error: unknown): string {
@@ -160,6 +179,21 @@ function sqliteStore(db: DatabaseSync): HistoryStore {
     backend: 'sqlite',
     durable: false,
     lastError: null,
+    describe() {
+      return {
+        backend: 'sqlite' as const,
+        durable: false,
+        degraded: false,
+        lastError: null,
+        lastErrorAt: null,
+        lastSuccessAt: null,
+      };
+    },
+    async probe() {
+      // Local storage is in-process; a successful prepare is proof it is usable.
+      db.prepare('SELECT 1').get();
+      return { ok: true, error: null };
+    },
     async saveRun(run, records) {
       const insertRun = db.prepare(
         `INSERT INTO processing_runs
@@ -361,11 +395,46 @@ export class SupabaseHistoryStore implements HistoryStore {
   private readonly base: string;
   private readonly key: string;
   private readonly fetchImpl: typeof fetch;
+  private probeCache: { at: number; ok: boolean; error: string | null } | null = null;
 
   constructor(config: SupabaseHistoryConfig) {
     this.base = `${config.url.replace(/\/+$/, '')}/rest/v1`;
     this.key = config.serviceKey;
     this.fetchImpl = config.fetchImpl ?? fetch;
+  }
+
+  describe(): HistoryStatus {
+    return {
+      backend: 'supabase',
+      durable: true,
+      degraded: this.lastError !== null,
+      lastError: this.lastError,
+      lastErrorAt: null,
+      lastSuccessAt: null,
+    };
+  }
+
+  /**
+   * Cached reachability check (30 s), so /api/health can report a real
+   * Supabase state without issuing a request on every probe.
+   */
+  async probe(): Promise<HistoryProbe> {
+    const now = Date.now();
+    if (this.probeCache && now - this.probeCache.at < 30_000) {
+      return { ok: this.probeCache.ok, error: this.probeCache.error };
+    }
+
+    try {
+      await this.request('processing_runs?select=id&limit=1', {
+        signal: AbortSignal.timeout(2_500),
+      });
+      this.probeCache = { at: now, ok: true, error: null };
+      return { ok: true, error: null };
+    } catch (error) {
+      const message = errorMessage(error);
+      this.probeCache = { at: now, ok: false, error: message };
+      return { ok: false, error: message };
+    }
   }
 
   private async request(path: string, init?: RequestInit): Promise<unknown> {
@@ -443,10 +512,14 @@ export class SupabaseHistoryStore implements HistoryStore {
 /**
  * Prefers durable storage, but never loses a run because of a backend outage:
  * writes fall back to SQLite and reads fall through to it when Supabase is
- * unreachable or does not know the run.
+ * unreachable or does not know the run. Every fallback is logged, and the
+ * degraded state is reported through /api/health.
  */
-class FallbackHistoryStore implements HistoryStore {
+export class FallbackHistoryStore implements HistoryStore {
   lastError: string | null = null;
+  lastErrorAt: string | null = null;
+  lastSuccessAt: string | null = null;
+  private consecutiveFailures = 0;
 
   constructor(
     private readonly primary: HistoryStore,
@@ -461,14 +534,62 @@ class FallbackHistoryStore implements HistoryStore {
     return this.primary.durable;
   }
 
+  private noteFailure(operation: string, error: unknown): void {
+    const message = `${operation}: ${errorMessage(error)}`;
+    this.lastError = message;
+    this.lastErrorAt = new Date().toISOString();
+    this.consecutiveFailures += 1;
+
+    // Log the first failure, then periodically: a long outage must not flood
+    // the container logs.
+    if (this.consecutiveFailures === 1 || this.consecutiveFailures % 25 === 0) {
+      console.error(
+        `[address-intelligence] durable history unavailable ` +
+          `(${this.consecutiveFailures} consecutive failure(s)); serving from local fallback: ${message}`,
+      );
+    }
+  }
+
+  private noteSuccess(): void {
+    if (this.consecutiveFailures > 0) {
+      console.info(
+        '[address-intelligence] durable history recovered; new runs are stored in Supabase again',
+      );
+    }
+    this.consecutiveFailures = 0;
+    this.lastError = null;
+    this.lastSuccessAt = new Date().toISOString();
+  }
+
+  describe(): HistoryStatus {
+    return {
+      backend: this.primary.backend,
+      durable: this.primary.durable,
+      degraded: this.lastError !== null,
+      lastError: this.lastError,
+      lastErrorAt: this.lastErrorAt,
+      lastSuccessAt: this.lastSuccessAt,
+    };
+  }
+
+  async probe(): Promise<HistoryProbe> {
+    try {
+      return await this.primary.probe();
+    } catch (error) {
+      return { ok: false, error: errorMessage(error) };
+    }
+  }
+
   async saveRun(run: BulkRunSummary, records: BulkRowRecord[]): Promise<void> {
     try {
       await this.primary.saveRun(run, records);
+      this.noteSuccess();
+      return;
     } catch (error) {
-      this.lastError = errorMessage(error);
+      this.noteFailure('durable history write failed', error);
       console.error(
-        '[address-intelligence] durable history write failed, keeping the run locally',
-        this.lastError,
+        `[address-intelligence] run ${run.runId} was kept in local fallback storage only and ` +
+          'will not survive a redeploy; re-upload it once Supabase is reachable.',
       );
       await this.fallback.saveRun(run, records);
     }
@@ -476,21 +597,37 @@ class FallbackHistoryStore implements HistoryStore {
 
   async listRuns(limit?: number): Promise<BulkRunSummary[]> {
     try {
-      return await this.primary.listRuns(limit);
+      const runs = await this.primary.listRuns(limit);
+      this.noteSuccess();
+      return runs;
     } catch (error) {
-      this.lastError = errorMessage(error);
-      return this.fallback.listRuns(limit);
+      this.noteFailure('durable history list failed', error);
+      const local = await this.fallback.listRuns(limit);
+      console.warn(
+        `[address-intelligence] listing ${local.length} run(s) from local fallback storage`,
+      );
+      return local;
     }
   }
 
   async getRun(runId: string, limit?: number): Promise<StoredRun | null> {
     try {
       const stored = await this.primary.getRun(runId, limit);
-      if (stored) return stored;
+      if (stored) {
+        this.noteSuccess();
+        return stored;
+      }
     } catch (error) {
-      this.lastError = errorMessage(error);
+      this.noteFailure('durable history read failed', error);
     }
-    return this.fallback.getRun(runId, limit);
+
+    const local = await this.fallback.getRun(runId, limit);
+    if (local) {
+      console.warn(
+        `[address-intelligence] run ${runId} was served from local fallback storage`,
+      );
+    }
+    return local;
   }
 }
 
@@ -501,7 +638,15 @@ class FallbackHistoryStore implements HistoryStore {
  */
 export function createHistoryStore(db: DatabaseSync): HistoryStore {
   const local = sqliteStore(db);
-  if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) return local;
+  if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
+    console.info(
+      '[address-intelligence] history backend: sqlite (local only — runs do not survive a redeploy). ' +
+        'Connect Supabase and provide SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY for durable history.',
+    );
+    return local;
+  }
+
+  console.info('[address-intelligence] history backend: supabase (durable) with sqlite fallback');
   return new FallbackHistoryStore(
     new SupabaseHistoryStore({ url: SUPABASE_URL, serviceKey: SUPABASE_SERVICE_ROLE_KEY }),
     local,

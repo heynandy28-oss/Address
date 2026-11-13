@@ -13,11 +13,12 @@ import { MAX_LINE_LENGTH, parseAddress } from '../engine/parse.js';
 import { normalizeKey } from '../engine/text.js';
 import type { BulkRowRecord, BulkRunSummary } from '../../shared/types.js';
 import type { HistoryStore } from '../history/store.js';
-import { parseDelimited, toCsv } from './csv.js';
+import { parseDelimited, hasUnbalancedQuotes, toCsv } from './csv.js';
 import { readXlsx, writeXlsx } from './xlsx.js';
 
 export const MAX_BULK_BYTES = 8 * 1024 * 1024;
 export const MAX_BULK_ROWS = 5000;
+export const MAX_BULK_COLUMNS = 100;
 export const PREVIEW_LIMIT = 50;
 
 /** Header names that identify the address column, most specific first. */
@@ -54,7 +55,17 @@ function isBlankRow(row: string[]): boolean {
 }
 
 function fromCsv(buffer: Buffer): Table {
-  const table = parseDelimited(buffer.toString('utf8'));
+  const text = buffer.toString('utf8');
+
+  if (hasUnbalancedQuotes(text)) {
+    throw new BulkError(
+      'The file has an unterminated quoted field, so it could not be read reliably. ' +
+        'Fix the quoting (or remove the stray double quote) and upload it again.',
+      422,
+    );
+  }
+
+  const table = parseDelimited(text);
   return {
     headers: table.headers,
     rows: table.rows,
@@ -91,7 +102,53 @@ function detectFormat(filename: string): 'csv' | 'xlsx' {
   const lower = filename.toLowerCase();
   if (lower.endsWith('.xlsx')) return 'xlsx';
   if (lower.endsWith('.csv') || lower.endsWith('.tsv') || lower.endsWith('.txt')) return 'csv';
-  throw new BulkError('Upload a .csv, .tsv or .xlsx file.');
+  throw new BulkError('Upload a .csv, .tsv or .xlsx file.', 415);
+}
+
+/** A ZIP local-file header, which is what an .xlsx container starts with. */
+function looksLikeZip(buffer: Buffer): boolean {
+  return (
+    buffer.length >= 4 &&
+    buffer[0] === 0x50 &&
+    buffer[1] === 0x4b &&
+    (buffer[2] === 0x03 || buffer[2] === 0x05 || buffer[2] === 0x07)
+  );
+}
+
+function looksBinary(buffer: Buffer): boolean {
+  return buffer.subarray(0, 2048).includes(0);
+}
+
+/**
+ * Content checks: the extension alone is not trusted. A renamed binary, a
+ * spreadsheet uploaded as .csv or a truncated CSV must be rejected with a
+ * message the user can act on, never parsed into meaningless rows.
+ */
+export function assertContentMatchesFormat(buffer: Buffer, format: 'csv' | 'xlsx'): void {
+  if (format === 'xlsx') {
+    if (!looksLikeZip(buffer)) {
+      throw new BulkError(
+        'This file is not a readable .xlsx workbook: the spreadsheet container header is missing. ' +
+          'Re-save it as .xlsx, or upload a .csv file.',
+        415,
+      );
+    }
+    return;
+  }
+
+  if (looksLikeZip(buffer)) {
+    throw new BulkError(
+      'This file contains a spreadsheet, not delimited text. Upload it as .xlsx instead of .csv.',
+      415,
+    );
+  }
+
+  if (looksBinary(buffer)) {
+    throw new BulkError(
+      'This file looks like binary data rather than text. Upload a UTF-8 .csv, .tsv or .txt file.',
+      415,
+    );
+  }
 }
 
 /** Resolves which column holds the address: explicit override, then detection. */
@@ -189,11 +246,28 @@ function buildRowRecord(
   };
 }
 
+export interface BulkLimits {
+  maxBytes?: number;
+  maxRows?: number;
+  maxColumns?: number;
+}
+
+/**
+ * Minimal usage-guard contract, so the bulk service stays free of policy
+ * details and remains directly testable.
+ */
+export interface BulkUsageGuard {
+  assertCanProcess(rows: number): void;
+  commit(rows: number): void;
+}
+
 export interface BulkInput {
   filename: string;
   buffer: Buffer;
   column?: string | null;
   countryHint?: string | null;
+  limits?: BulkLimits;
+  usage?: BulkUsageGuard;
 }
 
 export interface BulkOutcome {
@@ -243,17 +317,23 @@ function summarize(
 }
 
 export async function processBulk(store: HistoryStore, input: BulkInput): Promise<BulkOutcome> {
+  const maxBytes = input.limits?.maxBytes ?? MAX_BULK_BYTES;
+  const maxRows = input.limits?.maxRows ?? MAX_BULK_ROWS;
+  const maxColumns = input.limits?.maxColumns ?? MAX_BULK_COLUMNS;
+
   if (input.buffer.length === 0) {
     throw new BulkError('The uploaded file is empty.');
   }
-  if (input.buffer.length > MAX_BULK_BYTES) {
+  if (input.buffer.length > maxBytes) {
     throw new BulkError(
-      `Files must be ${Math.round(MAX_BULK_BYTES / (1024 * 1024))} MB or smaller.`,
+      `Files must be ${Math.round(maxBytes / (1024 * 1024))} MB or smaller; ` +
+        `this file is ${(input.buffer.length / (1024 * 1024)).toFixed(1)} MB.`,
       413,
     );
   }
 
   const format = detectFormat(input.filename);
+  assertContentMatchesFormat(input.buffer, format);
 
   let table: Table;
   if (format === 'csv') {
@@ -262,22 +342,32 @@ export async function processBulk(store: HistoryStore, input: BulkInput): Promis
     try {
       table = await fromXlsx(input.buffer);
     } catch {
-      throw new BulkError('The workbook could not be read. Save it as .xlsx and try again.');
+      throw new BulkError('The workbook could not be read. Save it as .xlsx and try again.', 415);
     }
   }
 
   if (table.headers.length === 0 || table.headers.every((header) => header === '')) {
     throw new BulkError('No header row was found in the file.');
   }
+  if (table.headers.length > maxColumns) {
+    throw new BulkError(
+      `Files may have at most ${maxColumns} columns; this file has ${table.headers.length}.`,
+      422,
+    );
+  }
   if (table.rows.length === 0) {
     throw new BulkError('The file has a header row but no data rows.');
   }
-  if (table.rows.length > MAX_BULK_ROWS) {
+  if (table.rows.length > maxRows) {
     throw new BulkError(
-      `Process at most ${MAX_BULK_ROWS} rows per file; this file has ${table.rows.length}.`,
+      `Process at most ${maxRows} rows per file; this file has ${table.rows.length}.`,
       413,
     );
   }
+
+  // The daily allowance is checked before any parsing work, so a rejected
+  // upload never consumes allowance and never costs CPU.
+  input.usage?.assertCanProcess(table.rows.length);
 
   const columnIndex = resolveAddressColumn(table.headers, input.column ?? null);
   const countryHint = input.countryHint ?? null;
@@ -300,6 +390,7 @@ export async function processBulk(store: HistoryStore, input: BulkInput): Promis
   );
 
   await store.saveRun(run, records);
+  input.usage?.commit(records.length);
 
   return { run, rows: records.slice(0, PREVIEW_LIMIT), previewLimit: PREVIEW_LIMIT };
 }
