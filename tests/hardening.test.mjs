@@ -4,7 +4,7 @@ import test from 'node:test';
 import { createApp } from '../dist/server/app.js';
 import { COUNTRY_FORMATS } from '../dist/server/engine/countries.js';
 import { parseAddress } from '../dist/server/engine/parse.js';
-import { FallbackHistoryStore, sqliteStore } from '../dist/server/history/store.js';
+import { createHistoryStore, FallbackHistoryStore } from '../dist/server/history/store.js';
 import { UploadGate } from '../dist/server/hardening/upload-gate.js';
 import { openDatabase } from '../dist/server/db/index.js';
 
@@ -369,7 +369,7 @@ function sampleRow() {
 
 test('a failing durable backend falls back to SQLite instead of losing the run', async () => {
   const db = openDatabase(':memory:');
-  const local = sqliteStore(db);
+  const local = createHistoryStore(db);
   const failing = {
     backend: 'supabase',
     durable: true,
