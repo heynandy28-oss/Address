@@ -5,7 +5,7 @@
  * always see what came in and what the engine derived from it. Row order is
  * the file order, and exports keep the original columns first.
  */
-import { useCallback, useEffect, useState } from 'react';
+import { Fragment, useCallback, useEffect, useState } from 'react';
 import type { FormEvent } from 'react';
 import type {
   BulkRowRecord,
@@ -61,6 +61,8 @@ export function BulkPanel() {
   const [result, setResult] = useState<BulkUploadResponse | null>(null);
   const [detail, setDetail] = useState<BulkRunDetail | null>(null);
   const [runs, setRuns] = useState<BulkRunSummary[]>([]);
+  const [filter, setFilter] = useState<'all' | 'attention' | 'verified' | 'conflicting'>('all');
+  const [openRow, setOpenRow] = useState<number | null>(null);
 
   const loadRuns = useCallback(async () => {
     try {
@@ -124,6 +126,8 @@ export function BulkPanel() {
       }
       setDetail((await response.json()) as BulkRunDetail);
       setResult(null);
+      setFilter('all');
+      setOpenRow(null);
     } catch {
       setError('That processing run could not be loaded.');
     } finally {
@@ -139,6 +143,33 @@ export function BulkPanel() {
         xlsx: `/api/bulk/${activeRun.runId}/export.xlsx`,
       }
     : null;
+
+  const statusCounts = activeRows.reduce(
+    (counts, row) => {
+      if (row.verificationStatus === 'verified') counts.verified += 1;
+      else if (row.verificationStatus === 'partially_verified') counts.partial += 1;
+      else if (row.verificationStatus === 'conflicting') counts.conflicting += 1;
+      else counts.unchecked += 1;
+      if (
+        row.verificationStatus === 'conflicting' ||
+        row.diagnostics.some((diagnostic) => diagnostic.severity === 'error')
+      ) {
+        counts.attention += 1;
+      }
+      return counts;
+    },
+    { verified: 0, partial: 0, conflicting: 0, unchecked: 0, attention: 0 },
+  );
+
+  const filteredRows = activeRows.filter((row) => {
+    if (filter === 'all') return true;
+    if (filter === 'verified') return row.verificationStatus === 'verified';
+    if (filter === 'conflicting') return row.verificationStatus === 'conflicting';
+    return (
+      row.verificationStatus === 'conflicting' ||
+      row.diagnostics.some((diagnostic) => diagnostic.severity === 'error')
+    );
+  });
 
   return (
     <section className="panel" aria-labelledby="bulk-heading">
@@ -234,6 +265,30 @@ export function BulkPanel() {
             </div>
           )}
 
+          <div className="filter-row" role="group" aria-label="Filter processed rows">
+            {(
+              [
+                ['all', `All rows ${activeRows.length}`],
+                ['attention', `Needs attention ${statusCounts.attention}`],
+                ['verified', `Verified ${statusCounts.verified}`],
+                ['conflicting', `Conflicting ${statusCounts.conflicting}`],
+              ] as const
+            ).map(([value, text]) => (
+              <button
+                key={value}
+                type="button"
+                className={filter === value ? 'filter-button is-active' : 'filter-button'}
+                aria-pressed={filter === value}
+                onClick={() => setFilter(value)}
+              >
+                {text}
+              </button>
+            ))}
+            <span className="panel-note">
+              {statusCounts.partial} partially verified · {statusCounts.unchecked} unchecked
+            </span>
+          </div>
+
           <div className="table-scroll">
             <table className="bulk-table">
               <thead>
@@ -248,11 +303,13 @@ export function BulkPanel() {
                   <th scope="col">Code</th>
                   <th scope="col">Confidence</th>
                   <th scope="col">Status</th>
+                  <th scope="col">Details</th>
                 </tr>
               </thead>
               <tbody>
-                {activeRows.map((row) => (
-                  <tr key={row.rowIndex}>
+                {filteredRows.map((row) => (
+                  <Fragment key={row.rowIndex}>
+                  <tr>
                     <td className="numeric">{row.sourceRowNumber}</td>
                     <td className="original-cell" title={JSON.stringify(row.originalRow)}>
                       {row.originalRow.join(' · ') || '—'}
@@ -269,11 +326,58 @@ export function BulkPanel() {
                         {statusLabel(row.verificationStatus)}
                       </span>
                     </td>
+                    <td>
+                      <button
+                        className="link-button"
+                        type="button"
+                        onClick={() =>
+                          setOpenRow(openRow === row.rowIndex ? null : row.rowIndex)
+                        }
+                      >
+                        {openRow === row.rowIndex ? 'Hide' : 'Details'}
+                      </button>
+                    </td>
                   </tr>
+                  {openRow === row.rowIndex && (
+                    <tr className="detail-row">
+                      <td colSpan={11}>
+                        {row.diagnostics.length === 0 ? (
+                          <p className="panel-note">No diagnostics for this row.</p>
+                        ) : (
+                          <ul className="diagnostic-list">
+                            {row.diagnostics.map((diagnostic, index) => (
+                              <li key={`${diagnostic.kind}-${index}`}>
+                                <span
+                                  className={
+                                    diagnostic.severity === 'error'
+                                      ? 'chip is-danger'
+                                      : diagnostic.severity === 'warning'
+                                        ? 'chip is-warn'
+                                        : 'chip is-muted'
+                                  }
+                                >
+                                  {diagnostic.severity}
+                                </span>{' '}
+                                <strong>{diagnostic.kind}</strong> — {diagnostic.message}
+                              </li>
+                            ))}
+                          </ul>
+                        )}
+                        <p className="panel-note">
+                          Address as supplied: {row.rawAddressText || '—'}
+                        </p>
+                      </td>
+                    </tr>
+                  )}
+                  </Fragment>
                 ))}
               </tbody>
             </table>
           </div>
+
+          {filteredRows.length === 0 && (
+            <p className="panel-note">No rows match this filter.</p>
+          )}
 
           {activeRun.rowCount > activeRows.length && (
             <p className="panel-note">
