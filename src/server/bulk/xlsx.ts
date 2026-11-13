@@ -14,7 +14,9 @@ import writeXlsxFileModule from 'write-excel-file/node';
 
 type ExcelCell = { value: string; type: typeof String } | null;
 
-const readXlsxFile = readXlsxFileModule as unknown as (input: Buffer) => Promise<unknown[][]>;
+const readXlsxFile = readXlsxFileModule as unknown as (
+  input: Buffer,
+) => Promise<Array<{ sheet: string; data: unknown[][] }>>;
 
 const writeXlsxFile = writeXlsxFileModule as unknown as (
   data: ExcelCell[][],
@@ -30,7 +32,8 @@ export function cellToText(cell: unknown): string {
 
 /** Reads the first worksheet of a workbook into string rows, in file order. */
 export async function readXlsx(buffer: Buffer): Promise<string[][]> {
-  const rows = await readXlsxFile(buffer);
+  const sheets = await readXlsxFile(buffer);
+  const rows = sheets[0]?.data ?? [];
   return rows.map((row) => row.map(cellToText));
 }
 
