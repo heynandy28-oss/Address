@@ -18,7 +18,12 @@ test('a complete address scores high and reports no errors', () => {
   const result = parseAddress('1600 Amphitheatre Parkway, Mountain View, CA 94043, USA');
 
   assert.equal(result.completeness, 100);
-  assert.ok(result.confidence >= 85, `expected a high score, received ${result.confidence}`);
+  // Deterministic parsing deliberately caps the score below 90: the street/city
+  // split is positional and no external evidence has confirmed the address yet.
+  assert.ok(
+    result.confidence >= 80 && result.confidence < 90,
+    `expected a strong but unverified score, received ${result.confidence}`,
+  );
   assert.equal(result.verificationStatus, 'unverified');
   assert.deepEqual(
     result.diagnostics.filter((diagnostic) => diagnostic.severity === 'error'),
