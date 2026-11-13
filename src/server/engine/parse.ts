@@ -99,8 +99,19 @@ function resolveTrailingCountry(segment: string): CountryResolution | null {
   return null;
 }
 
-function standardize(components: ParsedComponents): string {
-  return [components.addressLine1, components.city, components.region, components.postcode, components.country]
+function standardize(
+  components: ParsedComponents,
+  bases: Partial<Record<keyof ParsedComponents, ComponentBasis>>,
+): string {
+  // The region is written back the way the address used it: a code stays a code
+  // ("CA", "SP") and a spelled-out name stays spelled out. Converting one into
+  // the other would invent a convention the input never used.
+  const region =
+    bases.region === 'region-code'
+      ? components.regionCode ?? components.region
+      : components.region ?? components.regionCode;
+
+  return [components.addressLine1, components.city, region, components.postcode, components.country]
     .filter((value): value is string => Boolean(value))
     .join(', ');
 }
@@ -142,7 +153,7 @@ export function parseAddress(rawLine: string, options: ParseOptions = {}): Parse
   const finish = (): ParsedAddress => ({
     rawText,
     normalizedText,
-    standardizedText: standardize(components),
+    standardizedText: standardize(components, bases),
     components,
     bases,
     missingComponents: computeMissing(components, format),
