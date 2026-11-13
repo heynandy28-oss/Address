@@ -31,8 +31,9 @@ import {
   splitSegments,
   stripTrailingPunctuation,
 } from './text.js';
+import { assessAddress } from './diagnostics.js';
 
-export const PARSER_VERSION = '0.1.0-phase1';
+export const PARSER_VERSION = '0.2.0-phase2';
 
 /** Longest address line accepted by the API, in characters. */
 export const MAX_LINE_LENGTH = 400;
@@ -150,17 +151,34 @@ export function parseAddress(rawLine: string, options: ParseOptions = {}): Parse
 
   let format: CountryFormat | null = null;
 
-  const finish = (): ParsedAddress => ({
-    rawText,
-    normalizedText,
-    standardizedText: standardize(components, bases),
-    components,
-    bases,
-    missingComponents: computeMissing(components, format),
-    notes,
-    parserVersion: PARSER_VERSION,
-    parsedAt,
-  });
+  const finish = (): ParsedAddress => {
+    const missingComponents = computeMissing(components, format);
+    const assessment = assessAddress({
+      components,
+      bases,
+      missingComponents,
+      notes,
+      normalizedText,
+    });
+
+    return {
+      rawText,
+      normalizedText,
+      standardizedText: standardize(components, bases),
+      components,
+      bases,
+      missingComponents,
+      notes,
+      confidence: assessment.confidence,
+      completeness: assessment.completeness,
+      componentConfidence: assessment.componentConfidence,
+      diagnostics: assessment.diagnostics,
+      verificationStatus: assessment.verificationStatus,
+      statusReason: assessment.statusReason,
+      parserVersion: PARSER_VERSION,
+      parsedAt,
+    };
+  };
 
   if (!normalizedText) {
     notes.push({

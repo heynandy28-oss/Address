@@ -63,13 +63,13 @@ const ROADMAP: RoadmapPhase[] = [
     phase: 1,
     title: 'Parsing and standardization engine',
     summary: 'Tokenizer, abbreviation dictionary, per-country templates and a single-address API.',
-    status: 'in_progress',
+    status: 'done',
   },
   {
     phase: 2,
     title: 'Missing and misplaced component detection',
     summary: 'Diagnostics for absent, contradictory and misplaced components with confidence scoring.',
-    status: 'planned',
+    status: 'in_progress',
   },
   {
     phase: 3,
@@ -203,6 +203,11 @@ export function createApp(db: DatabaseSync): express.Express {
       })),
       policy:
         'Deterministic extraction only: a component is returned only when the supplied text supports it, otherwise it stays empty and a note explains why.',
+      diagnostics: {
+        kinds: ['missing', 'misplaced', 'conflicting', 'ambiguous', 'informational'],
+        confidenceModel:
+          'Per-component scores come from the extraction rule that produced them; defects subtract a fixed penalty. 0-100, no network involved.',
+      },
     });
   });
 

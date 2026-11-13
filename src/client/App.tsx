@@ -109,7 +109,7 @@ export default function App() {
             <span className="dot" aria-hidden="true" />
             {state === 'loading' ? 'Connecting' : online ? 'System online' : 'API unreachable'}
           </span>
-          <span className="phase-pill">Phase {health?.phase ?? 0} · Foundation</span>
+          <span className="phase-pill">Phase {health?.phase ?? 0} · Diagnostics</span>
           <button className="ghost-button" type="button" onClick={() => void load()}>
             Refresh
           </button>
@@ -175,6 +175,27 @@ export default function App() {
                 <span>{parsed.standardizedText || 'No standard form could be built.'}</span>
               </p>
 
+              <div className="assess-row">
+                <div className="confidence-block">
+                  <span className="card-label">Confidence</span>
+                  <div
+                    className="meter"
+                    role="img"
+                    aria-label={`Confidence ${parsed.confidence} of 100`}
+                  >
+                    <span className="meter-fill" style={{ width: `${parsed.confidence}%` }} />
+                  </div>
+                  <span className="confidence-value">{parsed.confidence} / 100</span>
+                </div>
+                <div className="assess-meta">
+                  <span className={`chip is-${statusTone(parsed.verificationStatus)}`}>
+                    {statusLabel(parsed.verificationStatus)}
+                  </span>
+                  <span className="card-label">Completeness {parsed.completeness}%</span>
+                </div>
+              </div>
+              <p className="status-reason">{parsed.statusReason}</p>
+
               <dl className="parse-grid">
                 {COMPONENT_ROWS.map(({ key, label }) => (
                   <div className="component" key={key}>
@@ -184,6 +205,9 @@ export default function App() {
                     </dd>
                     <p className="component-basis">
                       {parsed.bases[key] ? `basis: ${parsed.bases[key]}` : 'basis: not detected'}
+                      {parsed.componentConfidence[key] !== null
+                        ? ` · confidence ${parsed.componentConfidence[key]}%`
+                        : ''}
                     </p>
                   </div>
                 ))}
@@ -207,6 +231,20 @@ export default function App() {
                   {parsed.notes.map((note, index) => (
                     <li className={`note is-${note.severity}`} key={`${note.code}-${index}`}>
                       {note.message}
+                    </li>
+                  ))}
+                </ul>
+              )}
+
+              {parsed.diagnostics.length > 0 && (
+                <ul className="diagnostic-list" aria-label="Address diagnostics">
+                  {parsed.diagnostics.map((diagnostic, index) => (
+                    <li
+                      className={`diagnostic is-${diagnostic.severity}`}
+                      key={`${diagnostic.code}-${index}`}
+                    >
+                      <span className="diagnostic-kind">{diagnostic.kind}</span>
+                      <span>{diagnostic.message}</span>
                     </li>
                   ))}
                 </ul>
@@ -391,6 +429,34 @@ export default function App() {
       </footer>
     </div>
   );
+}
+
+function statusLabel(status: ParsedAddress['verificationStatus']): string {
+  switch (status) {
+    case 'verified':
+      return 'Verified';
+    case 'partially_verified':
+      return 'Partially verified';
+    case 'conflicting':
+      return 'Conflicting';
+    case 'not_checkable':
+      return 'Not checkable';
+    default:
+      return 'Unverified';
+  }
+}
+
+function statusTone(status: ParsedAddress['verificationStatus']): string {
+  switch (status) {
+    case 'verified':
+      return 'ok';
+    case 'conflicting':
+      return 'danger';
+    case 'not_checkable':
+      return 'muted';
+    default:
+      return 'warn';
+  }
 }
 
 function formatUptime(seconds: number): string {

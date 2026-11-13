@@ -676,3 +676,122 @@ tbody tr:last-child td {
     padding: 16px;
   }
 }
+
+/* Phase 2: confidence, verification status and diagnostics */
+.assess-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 14px;
+  margin: 14px 0 4px;
+}
+
+.confidence-block {
+  display: grid;
+  gap: 6px;
+  min-width: 220px;
+  flex: 1 1 240px;
+}
+
+.meter {
+  position: relative;
+  height: 8px;
+  border-radius: 999px;
+  background: #e6ebf3;
+  overflow: hidden;
+}
+
+.meter-fill {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #2563eb, #0f7b53);
+  transition: width 240ms ease;
+}
+
+.confidence-value {
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+}
+
+.assess-meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.status-reason {
+  margin: 0 0 14px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.diagnostic-list {
+  list-style: none;
+  margin: 14px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+
+.diagnostic {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 9px 12px;
+  border-radius: 10px;
+  font-size: 13px;
+  line-height: 1.45;
+  border: 1px solid transparent;
+}
+
+.diagnostic-kind {
+  flex: 0 0 auto;
+  font-size: 10.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.08);
+}
+
+.diagnostic.is-error {
+  background: var(--danger-soft);
+  border-color: #f6c9c4;
+  color: #7a1a12;
+}
+
+.diagnostic.is-warning {
+  background: var(--warn-soft);
+  border-color: #f3d9ae;
+  color: #7a4306;
+}
+
+.diagnostic.is-info {
+  background: var(--accent-soft);
+  border-color: #cdd9f7;
+  color: #1a3a8f;
+}
+
+.chip.is-danger {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.chip.is-muted {
+  background: #eef1f6;
+  color: var(--muted);
+}
+
+.chip.is-warn {
+  background: var(--warn-soft);
+  color: var(--warn);
+}
+
+.chip.is-ok {
+  background: var(--ok-soft);
+  color: var(--ok);
+}
