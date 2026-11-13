@@ -2,6 +2,8 @@ import path from 'node:path';
 import express from 'express';
 import type { DatabaseSync } from 'node:sqlite';
 import {
+  DAILY_ROW_BUDGET,
+  DAILY_RUN_BUDGET,
   ENGINE_NAME,
   ENGINE_VERSION,
   LLM_CONFIGURED,
@@ -13,10 +15,24 @@ import {
 import { getSchemaSnapshot } from './db/index.js';
 import {
   BulkError,
+  MAX_BULK_BYTES,
+  MAX_BULK_COLUMNS,
+  MAX_BULK_ROWS,
   buildExport,
   processBulk,
+  type BulkLimits,
 } from './bulk/service.js';
 import { createHistoryStore } from './history/store.js';
+import {
+  DEFAULT_RATE_LIMITS,
+  RateLimiter,
+  clientAddress,
+  rateLimitRuleFor,
+  type RateLimitRules,
+} from './hardening/rate-limit.js';
+import { UsageGuard, UsageLimitError, type UsageLimits } from './hardening/usage.js';
+import { UploadGate } from './hardening/upload-gate.js';
+import type { UsageResponse, UsageSnapshot } from '../shared/types.js';
 import { COUNTRY_FORMATS, COUNTRIES, REGIONS, lookupCountry } from './engine/countries.js';
 import { MAX_LINE_LENGTH, PARSER_VERSION, parseAddress } from './engine/parse.js';
 import { normalizeKey } from './engine/text.js';
@@ -103,8 +119,9 @@ const ROADMAP: RoadmapPhase[] = [
   {
     phase: 6,
     title: 'Hardening and scale checks',
-    summary: 'Rate limits, upload caps, fixtures per country and Free-plan performance checks.',
-    status: 'planned',
+    summary:
+      'Rate limits, upload caps, content validation, per-country fixtures and Free-plan usage limits.',
+    status: 'done',
   },
 ];
 
@@ -132,9 +149,30 @@ function routeParam(value: string | string[] | undefined): string {
 }
 
 function sendBulkError(res: express.Response, error: unknown): void {
+  if (error instanceof UsageLimitError) {
+    res.setHeader('Retry-After', String(error.retryAfterSeconds));
+    const body: ApiError & { usage: UsageSnapshot } = {
+      ok: false,
+      error: error.message,
+      usage: error.details,
+    };
+    res.status(error.status).json(body);
+    return;
+  }
+
   if (error instanceof BulkError) {
     const body: ApiError = { ok: false, error: error.message };
     res.status(error.status).json(body);
+    return;
+  }
+
+  // body-parser rejects an oversized raw body before our own size check runs.
+  if ((error as { type?: string } | null)?.type === 'entity.too.large') {
+    const body: ApiError = {
+      ok: false,
+      error: `Files must be ${Math.round(MAX_BULK_BYTES / (1024 * 1024))} MB or smaller.`,
+    };
+    res.status(413).json(body);
     return;
   }
 
@@ -143,17 +181,73 @@ function sendBulkError(res: express.Response, error: unknown): void {
   res.status(500).json(body);
 }
 
-export function createApp(db: DatabaseSync): express.Express {
+export interface AppOptions {
+  /** Injectable clock for deterministic rate-limit tests. */
+  now?: () => number;
+  /** Injectable clock for deterministic usage-window tests. */
+  clock?: () => Date;
+  rateLimits?: RateLimitRules;
+  usageLimits?: UsageLimits;
+  bulkLimits?: BulkLimits;
+}
+
+export function createApp(db: DatabaseSync, options: AppOptions = {}): express.Express {
   const app = express();
   const history = createHistoryStore(db);
+  const limiter = new RateLimiter(options.rateLimits ?? DEFAULT_RATE_LIMITS, options.now);
+  const usage = new UsageGuard(
+    options.usageLimits ?? { maxRowsPerDay: DAILY_ROW_BUDGET, maxRunsPerDay: DAILY_RUN_BUDGET },
+    options.clock,
+  );
+  const bulkLimits: BulkLimits = options.bulkLimits ?? {};
+  const uploadGate = new UploadGate();
+
   app.disable('x-powered-by');
+
+  // Rate limiting runs before body parsing, so a throttled caller cannot make
+  // the container read a large payload. /api/health is never limited: the
+  // platform probe must always get an answer.
+  app.use('/api', (req, res, next) => {
+    const ruleName = rateLimitRuleFor(req.method, req.originalUrl);
+    if (!ruleName) {
+      next();
+      return;
+    }
+
+    const outcome = limiter.check(
+      `${clientAddress(req.headers, req.ip ?? '')}:${ruleName}`,
+      ruleName,
+    );
+    res.setHeader('X-RateLimit-Limit', String(outcome.limit));
+    res.setHeader('X-RateLimit-Remaining', String(outcome.remaining));
+
+    if (!outcome.allowed) {
+      res.setHeader('Retry-After', String(outcome.retryAfterSeconds));
+      const body: ApiError & { retryAfterSeconds: number } = {
+        ok: false,
+        error:
+          `Too many requests: at most ${outcome.limit} per ` +
+          `${Math.round(limiter.rule(ruleName).windowMs / 1000)}s for this endpoint. ` +
+          `Retry in ${outcome.retryAfterSeconds}s.`,
+        retryAfterSeconds: outcome.retryAfterSeconds,
+      };
+      res.status(429).json(body);
+      return;
+    }
+
+    next();
+  });
+
   app.use(express.json({ limit: '1mb' }));
 
-  app.get('/api/health', (_req, res) => {
+  app.get('/api/health', async (_req, res) => {
     const snapshot = getSchemaSnapshot(db);
+    const storage = history.describe();
+    // Cached reachability probe; only meaningful when Supabase is configured.
+    const probe = SUPABASE_CONFIGURED ? await history.probe() : { ok: true, error: null };
 
     const body: HealthResponse = {
-      status: 'ok',
+      status: storage.degraded || !probe.ok ? 'degraded' : 'ok',
       service: SERVICE_NAME,
       version: SERVICE_VERSION,
       phase: PHASE,
@@ -171,18 +265,30 @@ export function createApp(db: DatabaseSync): express.Express {
         schemaVersion: snapshot.schemaVersion,
         tables: snapshot.tables,
         durable: history.durable,
+        degraded: storage.degraded,
+        lastError: storage.lastError,
+        lastErrorAt: storage.lastErrorAt,
       },
       integrations: {
         supabase: {
           configured: SUPABASE_CONFIGURED,
           purpose: 'Durable processing history',
           required: false,
+          reachable: SUPABASE_CONFIGURED ? probe.ok : null,
         },
         llm: {
           configured: LLM_CONFIGURED,
           purpose: 'Optional assist on top of the deterministic engine',
           required: false,
         },
+      },
+      limits: {
+        bulk: {
+          maxBytes: bulkLimits.maxBytes ?? MAX_BULK_BYTES,
+          maxRows: bulkLimits.maxRows ?? MAX_BULK_ROWS,
+          maxColumns: bulkLimits.maxColumns ?? MAX_BULK_COLUMNS,
+        },
+        usage: usage.status(),
       },
     };
 
@@ -334,6 +440,19 @@ export function createApp(db: DatabaseSync): express.Express {
    * middleware is needed; the name arrives URI-encoded in `x-filename`.
    */
   app.post('/api/bulk', express.raw({ type: () => true, limit: '9mb' }), async (req, res) => {
+    // One upload at a time: parsing is the most memory-hungry path, and the
+    // Free plan provides 1 GB RAM / 1 vCPU.
+    const release = uploadGate.tryAcquire();
+    if (!release) {
+      res.setHeader('Retry-After', '5');
+      const busy: ApiError = {
+        ok: false,
+        error: 'Another upload is still processing. Wait a few seconds and try again.',
+      };
+      res.status(429).json(busy);
+      return;
+    }
+
     try {
       if (!Buffer.isBuffer(req.body)) {
         const error: ApiError = { ok: false, error: 'Send the file as a raw binary body.' };
@@ -371,6 +490,8 @@ export function createApp(db: DatabaseSync): express.Express {
         buffer: req.body,
         column,
         countryHint,
+        limits: bulkLimits,
+        usage,
       });
 
       const payload: BulkUploadResponse = {
@@ -387,11 +508,41 @@ export function createApp(db: DatabaseSync): express.Express {
       res.status(201).json(payload);
     } catch (error) {
       sendBulkError(res, error);
+    } finally {
+      release();
     }
   });
 
+  /** Free-plan allowance and limit disclosure for the dashboard. */
+  app.get('/api/usage', (_req, res) => {
+    const body: UsageResponse = {
+      ok: true,
+      usage: usage.status(),
+      rateLimits: limiter.configured(),
+      upload: {
+        maxBytes: bulkLimits.maxBytes ?? MAX_BULK_BYTES,
+        maxRows: bulkLimits.maxRows ?? MAX_BULK_ROWS,
+        maxColumns: bulkLimits.maxColumns ?? MAX_BULK_COLUMNS,
+      },
+    };
+    res.json(body);
+  });
+
   app.get('/api/bulk/runs', async (_req, res) => {
-    const runs = await history.listRuns(20);
+    const runs = await history.listRuns(20).catch((error: unknown) => {
+      console.error('[address-intelligence] history listing failed', error);
+      return null;
+    });
+
+    if (runs === null) {
+      const body: ApiError = {
+        ok: false,
+        error: 'Processing history is temporarily unavailable. Try again shortly.',
+      };
+      res.status(503).json(body);
+      return;
+    }
+
     const body: BulkRunListResponse = { ok: true, runs };
     res.json(body);
   });
