@@ -114,6 +114,29 @@ const GUARANTEES = [
   'No paid API, subscription or mandatory key is required to run the system.',
 ];
 
+function decodeHeader(value: string | string[] | undefined): string | null {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  try {
+    return decodeURIComponent(trimmed);
+  } catch {
+    return trimmed;
+  }
+}
+
+function sendBulkError(res: express.Response, error: unknown): void {
+  if (error instanceof BulkError) {
+    const body: ApiError = { ok: false, error: error.message };
+    res.status(error.status).json(body);
+    return;
+  }
+
+  console.error('[address-intelligence] bulk processing failed', error);
+  const body: ApiError = { ok: false, error: 'The file could not be processed.' };
+  res.status(500).json(body);
+}
+
 export function createApp(db: DatabaseSync): express.Express {
   const app = express();
   app.disable('x-powered-by');
@@ -250,7 +273,108 @@ export function createApp(db: DatabaseSync): express.Express {
     res.json(body);
   });
 
+  /**
+   * Bulk upload. The file travels as the raw request body so no upload
+   * middleware is needed; the name arrives URI-encoded in `x-filename`.
+   */
+  app.post('/api/bulk', express.raw({ type: () => true, limit: '9mb' }), async (req, res) => {
+    try {
+      if (!Buffer.isBuffer(req.body)) {
+        const error: ApiError = { ok: false, error: 'Send the file as a raw binary body.' };
+        res.status(415).json(error);
+        return;
+      }
+
+      const filename = decodeHeader(req.headers['x-filename']);
+      if (!filename) {
+        const error: ApiError = {
+          ok: false,
+          error: 'Send the file name in the x-filename header.',
+        };
+        res.status(400).json(error);
+        return;
+      }
+
+      const column = decodeHeader(req.headers['x-column']);
+      const hintHeader = decodeHeader(req.headers['x-country-hint']);
+      let countryHint: string | null = null;
+      if (hintHeader) {
+        if (!lookupCountry(normalizeKey(hintHeader))) {
+          const error: ApiError = {
+            ok: false,
+            error: `The country hint "${hintHeader}" is not a recognised country name or ISO code.`,
+          };
+          res.status(400).json(error);
+          return;
+        }
+        countryHint = hintHeader;
+      }
+
+      const outcome = await processBulk(db, {
+        filename,
+        buffer: req.body,
+        column,
+        countryHint,
+      });
+
+      const payload: BulkUploadResponse = {
+        ok: true,
+        run: outcome.run,
+        rows: outcome.rows,
+        previewLimit: outcome.previewLimit,
+        exports: {
+          csv: `/api/bulk/${outcome.run.runId}/export.csv`,
+          xlsx: `/api/bulk/${outcome.run.runId}/export.xlsx`,
+        },
+      };
+
+      res.status(201).json(payload);
+    } catch (error) {
+      sendBulkError(res, error);
+    }
+  });
+
+  app.get('/api/bulk/runs', (_req, res) => {
+    const body: BulkRunListResponse = { ok: true, runs: listRuns(db, 20) };
+    res.json(body);
+  });
+
+  app.get('/api/bulk/:runId', (req, res) => {
+    const stored = getRun(db, req.params.runId, 200);
+    if (!stored) {
+      const error: ApiError = { ok: false, error: 'No processing run with that id.' };
+      res.status(404).json(error);
+      return;
+    }
+
+    const body: BulkRunDetail = { ok: true, run: stored.run, rows: stored.rows };
+    res.json(body);
+  });
+
+  const sendExport = (format: 'csv' | 'xlsx') =>
+    async (req: express.Request, res: express.Response): Promise<void> => {
+      try {
+        const file = await buildExport(db, req.params.runId, format);
+        if (!file) {
+          const error: ApiError = { ok: false, error: 'No processing run with that id.' };
+          res.status(404).json(error);
+          return;
+        }
+
+        res.setHeader('Content-Type', file.contentType);
+        res.setHeader('Content-Disposition', `attachment; filename="${file.filename}"`);
+        res.setHeader('Content-Length', String(file.body.length));
+        res.send(file.body);
+      } catch (error) {
+        sendBulkError(res, error);
+      }
+    };
+
+  app.get('/api/bulk/:runId/export.csv', sendExport('csv'));
+  app.get('/api/bulk/:runId/export.xlsx', sendExport('xlsx'));
+
   const clientDir = path.join(process.cwd(), 'dist', 'client');
+  app.use(express.static(clientDir, { index: false, maxAge: '1h' }));
 
   app.use((req, res, next) => {
     if (req.method !== 'GET' || req.path.startsWith('/api/')) {
