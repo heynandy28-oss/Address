@@ -191,10 +191,12 @@ test('exposes exactly one address-line field and never a second one', () => {
 });
 
 test('reads a unique ISO region code without inventing the country', () => {
-  const result = parseAddress('350 Fifth Avenue, New York, NY 10118');
+  // The city and postcode are deliberately outside the bundled GeoNames seed,
+  // so the only country evidence under test is the region code itself.
+  const result = parseAddress('350 Fifth Avenue, Brooklyn, NY 11201');
 
   assert.equal(result.components.addressLine1, '350 Fifth Avenue');
-  assert.equal(result.components.city, 'New York');
+  assert.equal(result.components.city, 'Brooklyn');
   assert.equal(result.components.regionCode, 'NY');
   assert.equal(result.components.countryCode, null);
   assert.equal(result.components.country, null);
@@ -499,10 +501,23 @@ test('a genuine street or building name is never removed as an organization', ()
   assert.equal(suffixed.components.addressLine1, '1A Leicester St');
 });
 
-test('a postcode shared by several countries never invents a country', () => {  const result = parseAddress('12 Hauptstrasse, 10117 Berlin');
+test('a postcode shared by several countries never invents a country', () => {
+  // No city evidence in this line: a five-digit postcode alone must not decide.
+  const result = parseAddress('12 Hauptstrasse, 10117');
 
   assert.equal(result.components.postcode, '10117');
   assert.equal(result.components.countryCode, null, 'a five-digit postcode is ambiguous');
   assert.equal(result.components.country, null);
   assert.ok(result.missingComponents.includes('country'));
+});
+
+test('city evidence resolves a country the postcode alone cannot', () => {
+  const result = parseAddress('12 Hauptstrasse, 10117 Berlin');
+
+  assert.equal(result.components.postcode, '10117');
+  assert.equal(result.components.city, 'Berlin');
+  assert.equal(result.components.country, 'Germany');
+  assert.equal(result.components.countryCode, 'DE');
+  assert.ok(result.notes.some((note) => note.code === 'country-inferred-from-city'));
+  assert.equal(result.missingComponents.includes('country'), false);
 });
